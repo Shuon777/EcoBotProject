@@ -1,3 +1,4 @@
+# --- НАЧАЛО ФАЙЛА RasaProject/actions/actions.py ---
 from typing import Any, Text, Dict, List, Optional
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
@@ -32,11 +33,9 @@ def call_gigachat_fallback_service(question: str) -> Optional[str]:
         logger.error(f"Не удалось подключиться к fallback-сервису GigaChat: {e}")
         return None
 
-
 def reset_slots_on_error() -> List[Dict[Text, Any]]:
     logger.debug("Сброс слотов из-за ошибки или отсутствия данных.")
     return [SlotSet("object_OFF", None), SlotSet("geo_place", None), SlotSet("feature", None)]
-
 
 class ActionGetDescription(Action):
     def name(self) -> Text:
@@ -50,14 +49,18 @@ class ActionGetDescription(Action):
             
         object_nom = normalize_to_nominative(raw_object)
         user_id = tracker.sender_id
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
-            url = f"{API_URLS['get_description']}?species_name={object_nom}"
+            url = f"{API_URLS['get_description']}?species_name={object_nom}&debug_mode={str(debug_mode).lower()}"
             response = requests.get(url, timeout=DEFAULT_TIMEOUT)
             
             data = response.json() if response.ok and response.text else {}
-            descriptions_list = data.get("descriptions", [])
             
+            if debug_mode and data.get("debug"):
+                dispatcher.utter_message(json_message={"type": "debug", "content": data["debug"]})
+
+            descriptions_list = data.get("descriptions", [])
             text = ""
             if descriptions_list:
                 first_item = descriptions_list[0]
@@ -95,7 +98,6 @@ class ActionExecuteGigachatFallback(Action):
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         question = tracker.latest_message.get('text')
         raw_object = tracker.get_slot("object_OFF")
-
         gigachat_answer = call_gigachat_fallback_service(question)
         
         if gigachat_answer:
@@ -115,26 +117,28 @@ class ActionGetPic(Action):
         object_nom = normalize_to_nominative(raw_object)
         raw_feats = tracker.get_slot("feature") or [] 
         features = classify_features(raw_feats)
-        # dispatcher.utter_message(text=f"Сущности: {tracker.latest_message['entities']}")
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
+        
         try:
+            url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
             payload = {"species_name": object_nom}
             if features:
                 payload["features"] = features
             
-            url = API_URLS["search_images"]
             logger.debug(f"Обращение к API: {url} с телом: {payload}")
             response = requests.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
-            
-            if not response.ok:
-                dispatcher.utter_message(text=f"Извините, я не нашел изображений для '{raw_object}'.")
-                return reset_slots_on_error()
-
             data = response.json()
-            images = data.get("images", [])
-            if data.get("status") == "not_found" or not images:
+
+            if debug_mode:
+                # В режиме отладки отправляем весь JSON ответа
+                dispatcher.utter_message(json_message=data)
+                return []
+
+            if not response.ok or data.get("status") == "not_found" or not data.get("images"):
                 dispatcher.utter_message(text=f"Извините, я не нашел изображений для '{raw_object}'.")
                 return reset_slots_on_error()
 
+            images = data.get("images", [])
             sent_images_count = 0
             for image_item in images[:5]:
                 if isinstance(image_item, dict) and "image_path" in image_item:
@@ -144,8 +148,6 @@ class ActionGetPic(Action):
                         if check_resp.status_code == 200:
                             dispatcher.utter_message(image=image_url)
                             sent_images_count += 1
-                        else:
-                            logger.warning(f"URL изображения вернул статус {check_resp.status_code}: {image_url}")
                     except requests.exceptions.RequestException as e:
                         logger.warning(f"Не удалось проверить URL изображения {image_url}: {e}")
             
@@ -155,11 +157,11 @@ class ActionGetPic(Action):
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionGetPic: {e}", exc_info=True)
-            dispatcher.utter_message(text="Проблема с подключением к серверу. Попробуйте, пожалуйста, позже.")
+            dispatcher.utter_message(text="Проблема с подключением к серверу.")
             return reset_slots_on_error()
         except Exception as e:
             logger.error(f"Непредвиденная ошибка в ActionGetPic: {e}", exc_info=True)
-            dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
+            dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
         return []
 
@@ -172,6 +174,7 @@ class ActionNeasrest(Action):
         raw_geo_place = tracker.get_slot("geo_place")
         object_nom = normalize_to_nominative(raw_object)
         geo_nom = normalize_to_nominative(raw_geo_place)
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
             if not handle_known_object_check(dispatcher, tracker, object_nom):
@@ -185,20 +188,21 @@ class ActionNeasrest(Action):
                 return reset_slots_on_error()
 
             coords_data = coords_response.json()
+            map_url = f"{API_URLS['coords_to_map']}?debug_mode={str(debug_mode).lower()}"
             map_payload = {
-                "latitude": coords_data.get("latitude"),
-                "longitude": coords_data.get("longitude"),
-                "radius_km": 35,
-                "species_name": object_nom,
-                "object_type": "geographical_entity"
+                "latitude": coords_data.get("latitude"), "longitude": coords_data.get("longitude"), 
+                "radius_km": 35, "species_name": object_nom, "object_type": "geographical_entity"
             }
-            map_response = requests.post(API_URLS["coords_to_map"], json=map_payload, timeout=DEFAULT_TIMEOUT)
+            map_response = requests.post(map_url, json=map_payload, timeout=DEFAULT_TIMEOUT)
+            map_data = map_response.json()
             
+            if debug_mode and map_data.get("debug"):
+                dispatcher.utter_message(json_message={"type": "debug", "content": map_data["debug"]})
+
             if not map_response.ok:
                 dispatcher.utter_message(text="Не удалось построить карту для этого места.")
                 return reset_slots_on_error()
 
-            map_data = map_response.json()
             names = map_data.get("names", [])
             unique_names = sorted(list(set(name.capitalize() for name in names)))
 
@@ -216,13 +220,12 @@ class ActionNeasrest(Action):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionNeasrest: {e}", exc_info=True)
-            dispatcher.utter_message(text="Проблема с подключением к серверу. Попробуйте, пожалуйста, позже.")
+            dispatcher.utter_message(text="Проблема с подключением к серверу.")
             return reset_slots_on_error()
         except Exception as e:
             logger.error(f"Непредвиденная ошибка в ActionNeasrest: {e}", exc_info=True)
-            dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
+            dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-
         return []
     
 class ActionDrawLocateMap(Action):
@@ -232,22 +235,26 @@ class ActionDrawLocateMap(Action):
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         raw_object = tracker.get_slot("object_OFF")
         object_nom = normalize_to_nominative(raw_object)
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
             if not handle_known_object_check(dispatcher, tracker, object_nom):
                 return reset_slots_on_error()
-
+            
+            url = f"{API_URLS['coords_to_map']}?debug_mode={str(debug_mode).lower()}"
             payload = {
                 "latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, 
                 "species_name": object_nom, "object_type": "geographical_entity"
             }
-            map_response = requests.post(API_URLS["coords_to_map"], json=payload, timeout=DEFAULT_TIMEOUT)
-            
+            map_response = requests.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
+            map_data = map_response.json()
+
+            if debug_mode and map_data.get("debug"):
+                dispatcher.utter_message(json_message={"type": "debug", "content": map_data["debug"]})
+
             if not map_response.ok:
                 dispatcher.utter_message(text="Не удалось построить карту ареала.")
                 return reset_slots_on_error()
-
-            map_data = map_response.json()
             
             if map_data.get("status") == "no_objects":
                 dispatcher.utter_message(text=f"К сожалению, я не смог найти ареал обитания для '{raw_object}'.")
@@ -264,13 +271,12 @@ class ActionDrawLocateMap(Action):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionDrawLocateMap: {e}", exc_info=True)
-            dispatcher.utter_message(text="Проблема с подключением к серверу. Попробуйте, пожалуйста, позже.")
+            dispatcher.utter_message(text="Проблема с подключением к серверу.")
             return reset_slots_on_error()
         except Exception as e:
             logger.error(f"Непредвиденная ошибка в ActionDrawLocateMap: {e}", exc_info=True)
-            dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
+            dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-
         return []
 
 class ActionObjectsInPolygon(Action):
@@ -280,16 +286,21 @@ class ActionObjectsInPolygon(Action):
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         raw_geo_place = tracker.get_slot("geo_place")
         geo_nom = normalize_to_nominative(raw_geo_place)
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
+            url = f"{API_URLS['objects_in_polygon']}?debug_mode={str(debug_mode).lower()}"
             payload = {"name": geo_nom, "buffer_radius_km": 5, "object_type": "biological_entity"}
-            response = requests.post(API_URLS["objects_in_polygon"], json=payload, timeout=DEFAULT_TIMEOUT)
+            response = requests.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
+            data = response.json()
+            
+            if debug_mode and data.get("debug"):
+                dispatcher.utter_message(json_message={"type": "debug", "content": data["debug"]})
 
             if not response.ok:
-                 dispatcher.utter_message(text=f"Не удалось найти полигон для места '{raw_geo_place}'. Пожалуйста, уточните название.")
+                 dispatcher.utter_message(text=f"Не удалось найти полигон для места '{raw_geo_place}'.")
                  return reset_slots_on_error()
 
-            data = response.json()
             unique_names = sorted(list(set(name.capitalize() for name in data.get("all_biological_names", []))))
             
             if unique_names:
@@ -303,13 +314,12 @@ class ActionObjectsInPolygon(Action):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionObjectsInPolygon: {e}", exc_info=True)
-            dispatcher.utter_message(text="Проблема с подключением к серверу. Попробуйте, пожалуйста, позже.")
+            dispatcher.utter_message(text="Проблема с подключением к серверу.")
             return reset_slots_on_error()
         except Exception as e:
             logger.error(f"Непредвиденная ошибка в ActionObjectsInPolygon: {e}", exc_info=True)
-            dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
+            dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-
         return []
 
 class ActionAskEcoBot(Action):
@@ -327,22 +337,23 @@ class ActionAskEcoBot(Action):
             return reset_slots_on_error()
 
         question = tracker.latest_message.get("text")
+        debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
         try:
             payload = {
-                "question": question, 
-                "knowledge_base_type": "vector", 
-                "similarity_threshold": 0.2, 
-                "similarity_deviation": 0.025, 
-                "use_gigachat": True, 
-                "strict_filter": True
+                "question": question, "knowledge_base_type": "vector", "similarity_threshold": 0.2, 
+                "similarity_deviation": 0.025, "use_gigachat": True, "strict_filter": True,
+                "debug_mode": debug_mode
             }
             response = requests.post(API_URLS["ask_ecobot"], json=payload, timeout=DEFAULT_TIMEOUT)
+            data = response.json()
+
+            if debug_mode and data.get("debug_info"):
+                dispatcher.utter_message(json_message={"type": "debug", "content": data["debug_info"]})
 
             if not response.ok:
                 dispatcher.utter_message(text="Произошла ошибка при обращении к базе знаний.")
                 return reset_slots_on_error()
 
-            data = response.json()
             dispatcher.utter_message(text=data.get("answer", "Ответ не найден."))
             
             for url in data.get("multi_url", {}).get("image_urls", []):
@@ -353,11 +364,9 @@ class ActionAskEcoBot(Action):
             geo_places = data.get("multi_url", {}).get("geo_places", [])
             map_response = None
             if "рядом" in question.lower() and len(geo_places) >= 2:
-                url_area = API_URLS["get_species_area"]
-                map_response = requests.post(url_area, json={"center": geo_places[0], "region": geo_places[1]}, timeout=GIGACHAT_TIMEOUT)
+                map_response = requests.post(API_URLS["get_species_area"], json={"center": geo_places[0], "region": geo_places[1]}, timeout=GIGACHAT_TIMEOUT)
             elif len(geo_places) >= 1:
-                url_draw = API_URLS["draw_multiple_places"]
-                map_response = requests.post(url_draw, json={"geo_places": geo_places}, timeout=GIGACHAT_TIMEOUT)
+                map_response = requests.post(API_URLS["draw_multiple_places"], json={"geo_places": geo_places}, timeout=GIGACHAT_TIMEOUT)
 
             if map_response and map_response.ok:
                 map_data = map_response.json()
@@ -366,13 +375,12 @@ class ActionAskEcoBot(Action):
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionAskEcoBot: {e}", exc_info=True)
-            dispatcher.utter_message(text="Проблема с подключением к серверу. Попробуйте, пожалуйста, позже.")
+            dispatcher.utter_message(text="Проблема с подключением к серверу.")
             return reset_slots_on_error()
         except Exception as e:
             logger.error(f"Непредвиденная ошибка в ActionAskEcoBot: {e}", exc_info=True)
-            dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
+            dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-
         return []
 
 class ActionClearSlots(Action):
@@ -437,3 +445,4 @@ class ActionShowHomeMenu(Action):
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         dispatcher.utter_message(text="Чем еще могу помочь?")
         return []
+# --- КОНЕЦ ФАЙЛА RasaProject/actions/actions.py ---

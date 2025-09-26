@@ -1,4 +1,4 @@
-#TelegramBot/bot.py
+# --- НАЧАЛО ФАЙЛА TelegramBot/bot.py ---
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiohttp
@@ -44,22 +44,22 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     )
     return keyboard
 
-async def get_bot_response(query: str, user_id: str, mode: str) -> list:
+async def get_bot_response(query: str, user_id: str, mode: str, debug_mode: bool = False) -> list:
     if mode == "rasa":
-        payload = {"sender": user_id, "message": query}
+        payload = {"sender": user_id, "message": query, "metadata": {"debug_mode": debug_mode}}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(RASA_WEBHOOK_URL, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
                     if resp.status == 200:
                         rasa_responses = await resp.json()
-                        return rasa_responses if rasa_responses else [{"type": "text", "content": "Извините, я не смог обработать ваш запрос."}]
+                        return rasa_responses or [{"type": "text", "content": "Извините, я не смог обработать ваш запрос."}]
                     else:
                         logger.error(f"Ошибка при обращении к Rasa: {resp.status} - {await resp.text()}")
                         return [{"type": "text", "content": "Ошибка при обращении к Rasa."}]
         except Exception as e:
             logger.error(f"Не удалось подключиться к серверу Rasa: {e}")
             return [{"type": "text", "content": "Мой основной обработчик Rasa сейчас недоступен."}]
-    else:
+    else: 
         if not qa:
             return [{"type": "text", "content": "Извините, режим GigaChat временно недоступен."}]
         
@@ -69,7 +69,7 @@ async def get_bot_response(query: str, user_id: str, mode: str) -> list:
             if not r.get("can_fulfill", True):
                 return [{"type": "text", "content": "Я понял ваш запрос, но не могу его выполнить с указанными признаками."}]
             
-            return await handle_intent(r, user_id=user_id, original_query=query)
+            return await handle_intent(r, user_id=user_id, original_query=query, debug_mode=debug_mode)
         else:
             return [{"type": "text", "content": f"Ошибка анализа: {result.get('error','неизвестно')}"}]
 
@@ -111,7 +111,8 @@ async def process_callback_buttons(callback_query: types.CallbackQuery):
 
     keyboard = create_settings_keyboard(user_id)
     try:
-        await callback_query.message.edit_reply_markup(keyboard)
+        if callback_query.message.reply_markup != keyboard:
+            await callback_query.message.edit_reply_markup(keyboard)
     except Exception as e:
         logger.warning(f"Не удалось обновить клавиатуру: {e}")
 
@@ -122,29 +123,19 @@ async def handle_message(message: types.Message):
     mode = get_user_mode(user_id)
 
     await bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
-    responses = await get_bot_response(query, user_id, mode)
+    responses = await get_bot_response(query, user_id, mode, debug_mode=False)
 
     for resp_data in responses:
         if mode == "rasa":
             norm = normalize_message(resp_data)
             await send_normalized_message(message, norm)
         else:
-            # --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
             if resp_data.get("type") == "text":
-                # Используем новую функцию для отправки потенциально длинного текста
-                await send_long_message(
-                    message, 
-                    resp_data["content"], 
-                    parse_mode=resp_data.get("parse_mode")
-                )
+                await send_long_message(message, resp_data["content"], parse_mode=resp_data.get("parse_mode"))
             elif resp_data.get("type") == "image":
                 await message.answer_photo(resp_data["content"])
             elif resp_data.get("type") == "map":
-                kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(
-                    "Открыть интерактивную карту 🌐", 
-                    url=resp_data["interactive"]
-                ))
-                # Текст для карты (caption) тоже может быть длинным
+                kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
                 if "caption" in resp_data and len(resp_data["caption"]) > 1024:
                     await message.answer_photo(photo=resp_data["static"], reply_markup=kb)
                     await send_long_message(message, resp_data["caption"])
@@ -153,3 +144,4 @@ async def handle_message(message: types.Message):
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
+# --- КОНЕЦ ФАЙЛА TelegramBot/bot.py ---

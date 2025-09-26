@@ -1,6 +1,6 @@
+# --- НАЧАЛО ФАЙЛА TelegramBot/handlers.py ---
 import aiohttp
 import logging
-import json
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from settings_manager import get_user_settings
 
@@ -13,13 +13,11 @@ def get_user_fallback_setting(user_id: str) -> bool:
 async def call_gigachat_fallback_service(question: str) -> str | None:
     """Асинхронно делает HTTP-запрос к внешнему GigaChat сервису."""
     url = GIGACHAT_FALLBACK_URL
-    logger.debug(f"Обращение к GigaChat Fallback API: {url}")
     try:
         payload = {"question": question}
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=GIGACHAT_TIMEOUT) as response:
                 if response.ok:
-                    logger.info("Fallback-сервис GigaChat ответил успешно.")
                     data = await response.json()
                     return data.get("answer")
                 else:
@@ -29,28 +27,30 @@ async def call_gigachat_fallback_service(question: str) -> str | None:
         logger.error(f"Сетевая ошибка при подключении к fallback-сервису GigaChat: {e}")
         return None
 
-async def handle_get_picture(result: dict) -> list:
+async def handle_get_picture(result: dict, debug_mode: bool) -> list:
     messages = []
     object_nom = result.get("object")
     features = result.get("features", {})
-    url = API_URLS["search_images"]
+    
+    # --- ИЗМЕНЕНИЕ: debug_mode теперь в URL ---
+    url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
+    payload = {"species_name": object_nom, "features": features}
 
     try:
-        payload = {"species_name": object_nom}
-        if features:
-            payload["features"] = features
-        
         async with aiohttp.ClientSession() as session:
             logger.debug(f"Обращение к API: {url} с телом: {payload}")
             async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-                if not resp.ok:
-                    logger.warning(f"API {url} вернуло ошибку {resp.status} для '{object_nom}'")
-                    return [{"type": "text", "content": f"Извините, изображения для '{object_nom}' не найдены."}]
-                
                 data = await resp.json()
-                if data.get("status") == "not_found" or not data.get("images"):
-                    return [{"type": "text", "content": f"Извините, ничего не найдено для '{object_nom}'."}]
 
+                # --- ИЗМЕНЕНИЕ: Разное поведение в зависимости от debug_mode ---
+                if debug_mode:
+                    # В режиме отладки возвращаем весь JSON как есть
+                    return [data]
+
+                if not resp.ok or data.get("status") == "not_found" or not data.get("images"):
+                    return [{"type": "text", "content": f"Извините, изображения для '{object_nom}' не найдены."}]
+
+                # В обычном режиме - извлекаем только картинки
                 images = data.get("images", [])
                 sent_images_count = 0
                 for img in images[:5]:
@@ -61,8 +61,6 @@ async def handle_get_picture(result: dict) -> list:
                                 if check_resp.status == 200:
                                     messages.append({"type": "image", "content": image_url})
                                     sent_images_count += 1
-                                else:
-                                    logger.warning(f"URL изображения вернул статус {check_resp.status}: {image_url}")
                         except aiohttp.ClientError as e:
                             logger.warning(f"Не удалось проверить URL изображения {image_url}: {e}")
                 
@@ -70,68 +68,65 @@ async def handle_get_picture(result: dict) -> list:
                      messages.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для '{object_nom}'."})
 
     except aiohttp.ClientError as e:
-        logger.error(f"Сетевая ошибка в handle_get_picture: {e}")
-        messages.append({"type": "text", "content": "Проблема с подключением к серверу. Попробуйте позже."})
+        messages.append({"type": "text", "content": "Проблема с подключением к серверу."})
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_get_picture: {e}", exc_info=True)
         messages.append({"type": "text", "content": "Произошла внутренняя ошибка."})
 
     return messages
 
-async def handle_get_description(result: dict, user_id: str, original_query: str) -> list:
+async def handle_get_description(result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    messages = []
     object_nom = result.get("object")
-    url = f"{API_URLS['get_description']}?species_name={object_nom}"
+    url = f"{API_URLS['get_description']}?species_name={object_nom}&debug_mode={str(debug_mode).lower()}"
 
     try:
         async with aiohttp.ClientSession() as session:
-            logger.debug(f"Обращение к API: {url}")
             async with session.get(url, timeout=DEFAULT_TIMEOUT) as resp:
                 data = await resp.json() if resp.ok else {}
-                descriptions = data.get("descriptions", [])
                 
+                if debug_mode and data.get("debug"):
+                    messages.append({"type": "debug", "content": data["debug"]})
+
+                descriptions = data.get("descriptions", [])
                 text = ""
-                # --- ИЗМЕНЕНИЕ: БЕРЕМ ТОЛЬКО ПЕРВОЕ ОПИСАНИЕ ---
                 if descriptions:
                     first_item = descriptions[0]
-                    if isinstance(first_item, dict):
-                        text = first_item.get("content", "")
-                    elif isinstance(first_item, str):
-                        text = first_item
-                # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+                    if isinstance(first_item, dict): text = first_item.get("content", "")
+                    elif isinstance(first_item, str): text = first_item
 
-                # Если после попытки взять первое описание текста все равно нет,
-                # или ответ API был неуспешным, запускаем fallback.
                 if not resp.ok or not text:
                     if get_user_fallback_setting(user_id):
                         fallback_answer = await call_gigachat_fallback_service(original_query)
-                        if fallback_answer:
-                            full_answer = f"**Ответ от GigaChat:**\n\n{fallback_answer}"
-                            return [{"type": "text", "content": full_answer, "parse_mode": "Markdown"}]
-                        else:
-                            return [{"type": "text", "content": "Извините, не удалось получить дополнительную информацию."}]
-                    else:
-                        logger.warning(f"API {url} вернуло ошибку {resp.status} или пустое описание.")
-                        return [{"type": "text", "content": f"Извините, описание для '{object_nom}' не найдено."}]
+                        if fallback_answer: messages.append({"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"})
+                        else: messages.append({"type": "text", "content": "Извините, не удалось получить дополнительную информацию."})
+                    else: messages.append({"type": "text", "content": f"Извините, описание для '{object_nom}' не найдено."})
+                    return messages
 
-                return [{"type": "text", "content": text}]
+                messages.append({"type": "text", "content": text})
+                return messages
         
     except aiohttp.ClientError as e:
-        logger.error(f"Сетевая ошибка в handle_get_description: {e}")
-        return [{"type": "text", "content": "Проблема с подключением к серверу. Попробуйте позже."}]
+        return [{"type": "text", "content": "Проблема с подключением к серверу."}]
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_get_description: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка."}]
 
-async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, object_name: str, geo_name: str = None) -> list:
-    """Асинхронная вспомогательная функция для получения карт."""
+async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, object_name: str, debug_mode: bool, geo_name: str = None) -> list:
     messages = []
-    logger.debug(f"Обращение к API карт: {url} с телом: {payload}")
-    async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
-        if not map_resp.ok:
-            logger.error(f"API карт {url} вернуло ошибку {map_resp.status}: {await map_resp.text()}")
-            return [{"type": "text", "content": "Не удалось построить карту."}]
-
+    full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
+    logger.debug(f"Обращение к API карт: {full_url} с телом: {payload}")
+    
+    async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
         map_data = await map_resp.json()
+
+        if debug_mode and map_data.get("debug"):
+            messages.append({"type": "debug", "content": map_data["debug"]})
+
+        if not map_resp.ok:
+            messages.append({"type": "text", "content": "Не удалось построить карту."})
+            return messages
+
         names = map_data.get("names", [])
         unique_names = sorted(list(set(name.capitalize() for name in names)))
         
@@ -151,14 +146,13 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
         
         return messages
 
-async def handle_nearest(result: dict) -> list:
+async def handle_nearest(result: dict, debug_mode: bool) -> list:
     object_nom = result.get("object")
     geo_nom = result.get("geo_place")
 
     try:
         async with aiohttp.ClientSession() as session:
             coords_url = API_URLS["get_coords"]
-            logger.debug(f"Обращение к API координат: {coords_url} с телом: {{'name': '{geo_nom}'}}")
             async with session.post(coords_url, json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT) as resp:
                 if not resp.ok or (await resp.json()).get("status") == "not_found":
                     return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
@@ -168,16 +162,14 @@ async def handle_nearest(result: dict) -> list:
                 "latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, 
                 "species_name": object_nom, "object_type": "geographical_entity"
             }
-            return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, geo_nom)
+            return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode, geo_nom)
             
-    except aiohttp.ClientError as e:
-        logger.error(f"Сетевая ошибка в handle_nearest: {e}")
-        return [{"type": "text", "content": "Проблема с подключением к серверу. Попробуйте позже."}]
+    except aiohttp.ClientError as e: return [{"type": "text", "content": "Проблема с подключением к серверу."}]
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_nearest: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка."}]
 
-async def handle_draw_locate_map(result: dict) -> list:
+async def handle_draw_locate_map(result: dict, debug_mode: bool) -> list:
     object_nom = result.get("object")
     payload = {
         "latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, 
@@ -185,30 +177,32 @@ async def handle_draw_locate_map(result: dict) -> list:
     }
     try:
         async with aiohttp.ClientSession() as session:
-            return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom)
-    except aiohttp.ClientError as e:
-        logger.error(f"Сетевая ошибка в handle_draw_locate_map: {e}")
-        return [{"type": "text", "content": "Проблема с подключением к серверу. Попробуйте позже."}]
+            return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
+    except aiohttp.ClientError as e: return [{"type": "text", "content": "Проблема с подключением к серверу."}]
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_draw_locate_map: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка."}]
 
-async def handle_objects_in_polygon(result: dict) -> list:
-    geo_nom = result.get("geo_place")
-    url = API_URLS["objects_in_polygon"]
-    payload = {"name": geo_nom, "buffer_radius_km": 5, "object_type": "biological_entity"}
+async def handle_objects_in_polygon(result: dict, debug_mode: bool) -> list:
     messages = []
+    geo_nom = result.get("geo_place")
+    url = f"{API_URLS['objects_in_polygon']}?debug_mode={str(debug_mode).lower()}"
+    payload = {"name": geo_nom, "buffer_radius_km": 5, "object_type": "biological_entity"}
     
     try:
         async with aiohttp.ClientSession() as session:
             logger.debug(f"Обращение к API: {url} с телом: {payload}")
             async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-                if not resp.ok:
-                    return [{"type": "text", "content": f"Не удалось найти полигон для '{geo_nom}'. Пожалуйста, уточните название."}]
-
                 data = await resp.json()
+
+                if debug_mode and data.get("debug"):
+                    messages.append({"type": "debug", "content": data["debug"]})
+
+                if not resp.ok:
+                    messages.append({"type": "text", "content": f"Не удалось найти полигон для '{geo_nom}'."})
+                    return messages
+
                 names = data.get("all_biological_names", [])
-                
                 if names:
                     unique_names = sorted(list(set(name.capitalize() for name in names)))
                     flora_list = f"🌿 В районе '{geo_nom}' найдены следующие объекты:\n" + "• " + "\n• ".join(unique_names)
@@ -221,28 +215,33 @@ async def handle_objects_in_polygon(result: dict) -> list:
             
         return messages
 
-    except aiohttp.ClientError as e:
-        logger.error(f"Сетевая ошибка в handle_objects_in_polygon: {e}")
-        return [{"type": "text", "content": "Проблема с подключением к серверу. Попробуйте позже."}]
+    except aiohttp.ClientError as e: return [{"type": "text", "content": "Проблема с подключением к серверу."}]
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_objects_in_polygon: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка."}]
 
-async def handle_intent(result: dict, user_id: str, original_query: str) -> list:
+async def handle_intent(result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
     intent = result.get("intent")
     
-    # Обработчики теперь асинхронные
+    handler_kwargs = {"result": result, "debug_mode": debug_mode}
+    if intent == "get_text":
+        handler_kwargs.update({"user_id": user_id, "original_query": original_query})
+
     handlers = {
         "get_picture": handle_get_picture,
-        "get_text": lambda res: handle_get_description(res, user_id, original_query),
+        "get_text": handle_get_description,
         "get_intersection_object_on_map": handle_nearest,
         "get_location": handle_draw_locate_map,
         "get_objects_in_polygon": handle_objects_in_polygon,
     }
 
-    handler = handlers.get(intent)
-    if handler:
-        return await handler(result)
+    handler_func = handlers.get(intent)
+    if handler_func:
+        if intent != "get_text":
+            handler_kwargs.pop("user_id", None)
+            handler_kwargs.pop("original_query", None)
+        return await handler_func(**handler_kwargs)
     else:
         logger.warning(f"Неизвестный intent: {intent}")
         return [{"type": "text", "content": "Извините, я пока не умею обрабатывать такой запрос."}]
+# --- КОНЕЦ ФАЙЛА TelegramBot/handlers.py ---
