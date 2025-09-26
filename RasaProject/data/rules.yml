@@ -1,0 +1,64 @@
+version: "3.1"
+
+rules:
+  - rule: Показываем помощь
+    steps:
+      - intent: show_help
+      - action: utter_help
+      - action: action_show_home_menu 
+
+  - rule: Показываем кнопки вопросов
+    steps:
+      - intent: show_questions
+      - action: action_show_questions_buttons
+
+  - rule: Простые вопросы
+    steps:
+      - intent: SimpleQ_intent
+      - action: action_show_simple_questions
+
+  - rule: Вопросы с признаком
+    steps:
+      - intent: SignQ_intent
+      - action: action_show_signq_questions
+
+  - rule: Вернуться в меню и ОЧИСТИТЬ КОНТЕКСТ
+    steps:
+      - intent: back_to_menu
+      - action: action_show_home_menu
+      - action: action_clear_slots 
+
+  - rule: fallback
+    steps:
+      - intent: nlu_fallback
+      - action: utter_fallback
+  
+
+  - rule: Показать картинку объекта флоры или фауны
+    steps:
+      - intent: show_object_with_features
+      - action: action_get_picture
+
+
+  - rule: Показать карту ареала обитания объекта флоры или фауны
+    steps:
+      - intent: locate_object_on_map
+      - action: action_draw_locate_map
+
+
+  - rule: Дать информацию о объекте флоры или фауны
+    steps:
+      - intent: tell_about_OFF_intent
+      - action: action_get_description
+
+
+  - rule: Ближайшее
+    steps:
+      - intent: nerasrest_place_by_object_intent
+      - action: action_neasrest
+
+  
+  - rule: Объекты в полигоне
+    steps:
+      - intent: objects_in_polygon_intent
+      - action: action_objects_in_polygon

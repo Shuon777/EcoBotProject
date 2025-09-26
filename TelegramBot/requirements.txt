@@ -1,0 +1,6 @@
+aiogram==2.25.2
+langchain-gigachat
+pydantic>=2
+python-dotenv
+flask
+filelock

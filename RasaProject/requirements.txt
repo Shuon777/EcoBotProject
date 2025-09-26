@@ -1,0 +1,7 @@
+rasa==3.6.21
+requests
+thefuzz
+python-dotenv
+pymorphy2
+rasa[transformers]
+coloredlogs

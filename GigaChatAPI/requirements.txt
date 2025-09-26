@@ -1,0 +1,4 @@
+flask
+langchain-gigachat
+pydantic>=2
+python-dotenv
