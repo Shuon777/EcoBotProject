@@ -42,17 +42,21 @@ class ActionGetDescription(Action):
         return "action_get_description"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_object = tracker.get_slot("object_OFF")
-        if not raw_object:
+        # Берем название из слота "КАК ЕСТЬ". Оно уже должно быть каноничным.
+        object_name = tracker.get_slot("object_OFF")
+        
+        if not object_name:
             dispatcher.utter_message(text="Пожалуйста, уточните, о каком объекте вы спрашиваете.")
             return []
             
-        object_nom = normalize_to_nominative(raw_object)
         user_id = tracker.sender_id
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
+        logger.debug(f"ActionGetDescription: Получаю описание для объекта '{object_name}' (без нормализации).")
+
         try:
-            url = f"{API_URLS['get_description']}?species_name={object_nom}&debug_mode={str(debug_mode).lower()}"
+            # Отправляем в API точное название, которое получили от NLU
+            url = f"{API_URLS['get_description']}?species_name={object_name}&debug_mode={str(debug_mode).lower()}"
             response = requests.get(url, timeout=DEFAULT_TIMEOUT)
             
             data = response.json() if response.ok and response.text else {}
@@ -70,12 +74,12 @@ class ActionGetDescription(Action):
                     text = first_item
 
             if not response.ok or not text:
-                logger.warning(f"Описание для '{object_nom}' не найдено. Проверяем fallback.")
+                logger.warning(f"Описание для '{object_name}' не найдено. Проверяем fallback.")
                 if get_user_fallback_setting(user_id):
                     dispatcher.utter_message(text="Этого нет в моей базе знаний. Минутку, обращаюсь к GigaChat...")
                     return [FollowupAction("action_execute_gigachat_fallback")]
                 else:
-                    dispatcher.utter_message(text=f"К сожалению, у меня нет описания для '{raw_object}'.")
+                    dispatcher.utter_message(text=f"К сожалению, у меня нет описания для '{object_name}'.")
                 return reset_slots_on_error()
 
             dispatcher.utter_message(text=text)
@@ -445,4 +449,114 @@ class ActionShowHomeMenu(Action):
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         dispatcher.utter_message(text="Чем еще могу помочь?")
         return []
-# --- КОНЕЦ ФАЙЛА RasaProject/actions/actions.py ---
+    
+class ActionDisambiguateDescription(Action):
+    def name(self) -> Text:
+        return "action_disambiguate_description"
+
+    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        # EntitySynonymMapper уже привел "иву" -> "ива" или "иву козью" -> "Ива козья"
+        object_name = tracker.get_slot("object_OFF")
+        
+        if not object_name:
+            dispatcher.utter_message(text="Пожалуйста, уточните, о каком объекте вы спрашиваете.")
+            return []
+
+        # Определяем, новый ли это поиск или пагинация
+        current_offset = int(tracker.get_slot("search_offset") or 0)
+        if tracker.latest_message['intent'].get('name') != 'search_more':
+            current_offset = 0
+
+        logger.debug(f"Запрос на уточнение для '{object_name}' со смещением {current_offset}")
+
+        try:
+            response = requests.post(
+                API_URLS["find_species_with_description"], 
+                json={"name": object_name, "limit": 4, "offset": current_offset}
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as e:
+            logger.error(f"Ошибка API при уточнении объекта: {e}")
+            dispatcher.utter_message(text="Извините, возникла проблема с подключением к базе знаний.")
+            return [SlotSet("search_offset", None)]
+
+        status = data.get("status")
+        matches = data.get("matches", [])
+
+        # Если API нашло точное совпадение (например, для "Ива козья")
+        if status == "found":
+            logger.debug(f"Найдено точное совпадение для '{object_name}'. Сразу запускаем action_get_description.")
+            return [FollowupAction("action_get_description")]
+
+        # Если API нашло несколько вариантов (для "ива")
+        elif status == "ambiguous":
+            logger.debug(f"Найдено несколько вариантов для '{object_name}'. Показываем кнопки.")
+            
+            buttons = [{"title": name, "payload": f'/select_option{{"index": {i}}}'} for i, name in enumerate(matches)]
+            if data.get("has_more", False):
+                buttons.append({"title": "Поискать еще ➡️", "payload": "/search_more"})
+
+            inline_keyboard = [[{"text": b["title"], "callback_data": b["payload"]}] for b in buttons]
+            custom_json = {"text": "Я знаю несколько видов. Уточните, какой именно вас интересует?", "reply_markup": {"inline_keyboard": inline_keyboard}}
+            dispatcher.utter_message(json_message=custom_json)
+            
+            new_offset = current_offset + len(matches)
+            return [SlotSet("disambiguation_options", matches), SlotSet("search_offset", new_offset)]
+
+        # Если ничего не найдено
+        else: # status == "not_found"
+            dispatcher.utter_message(text=f"К сожалению, у меня нет описания для '{object_name}'.")
+            return [SlotSet("search_offset", None)]
+
+class ActionClearSearchOffset(Action):
+    def name(self) -> Text:
+        return "action_clear_search_offset"
+
+    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        logger.debug("Очистка слота search_offset.")
+        return [SlotSet("search_offset", None)]
+    
+class ActionRetrieveSelection(Action):
+    def name(self) -> Text:
+        return "action_retrieve_selection"
+
+    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        logger.debug("--- ActionRetrieveSelection ЗАПУЩЕН ---")
+
+        # Способ 1: Получаем все сущности
+        all_entities = tracker.latest_message.get('entities', [])
+        logger.debug(f"Все сущности, которые я вижу: {all_entities}")
+
+        # Способ 2: Используем стандартный метод get_latest_entity_values
+        selected_index_str = next(tracker.get_latest_entity_values("index"), None)
+        logger.debug(f"Результат get_latest_entity_values('index'): {selected_index_str}")
+        
+        if selected_index_str is None:
+            logger.error("КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь 'index' из трекера. Проверьте domain.yml и NLU.")
+            dispatcher.utter_message(text="Произошла ошибка при обработке вашего выбора. Попробуйте еще раз.")
+            return []
+
+        options = tracker.get_slot("disambiguation_options")
+        logger.debug(f"Опции, которые я достал из слота: {options}")
+        
+        if not options:
+            logger.error("КРИТИЧЕСКАЯ ОШИБКА: Слот 'disambiguation_options' пуст.")
+            dispatcher.utter_message(text="Извините, я, кажется, забыл, из чего мы выбирали. Давайте начнем заново.")
+            return []
+
+        try:
+            selected_index = int(selected_index_str)
+            selected_option = options[selected_index]
+            
+            logger.debug(f"Успех! Пользователь выбрал индекс {selected_index}, что соответствует '{selected_option}'")
+            
+            return [
+                SlotSet("object_OFF", selected_option), 
+                SlotSet("disambiguation_options", None)
+            ]
+        except (ValueError, IndexError) as e:
+            logger.error(f"Не удалось получить вариант по индексу '{selected_index_str}': {e}")
+            dispatcher.utter_message(text="Произошла ошибка при выборе варианта. Пожалуйста, попробуйте снова.")
+            return []

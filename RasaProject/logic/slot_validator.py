@@ -21,18 +21,17 @@ def normalize_yo(text: str) -> str:
     return text.lower().replace('ё', 'е')
 
 def normalize_to_nominative(text: str) -> str:
-    """Приводит каждое слово к именительному падежу и нижнему регистру"""
+    """
+    Приводит каждое слово к его словарной форме (лемме) и нижнему регистру.
+    (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+    """
     if not text:
         return ""
     
     logger.debug(f"Начало нормализации для текста: '{text}'")
     try:
         words = text.split()
-        result = []
-        for word in words:
-            parsed = morph.parse(word)[0]
-            nom = parsed.inflect({'nomn'})
-            result.append(nom.word if nom else word)
+        result = [morph.parse(word)[0].normal_form for word in words]
         
         result_string = " ".join(result).lower()
         logger.debug(f"Текст '{text}' нормализован в '{result_string}'")

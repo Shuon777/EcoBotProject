@@ -97,7 +97,53 @@ async def handle_settings(message: types.Message):
 async def process_callback_buttons(callback_query: types.CallbackQuery):
     user_id = str(callback_query.from_user.id)
     data = callback_query.data
+    message = callback_query.message
 
+    # --- ЛОГИКА ДЛЯ RASA ---
+    if data.startswith('/'):
+        # Если это НЕ кнопка "Поискать еще", то мы убираем клавиатуру,
+        # потому что диалог выбора завершен.
+        if data != '/search_more':
+            try:
+                await message.edit_reply_markup(reply_markup=None)
+            except Exception as e:
+                logger.warning(f"Не удалось убрать клавиатуру: {e}")
+
+        # Прямой вызов логики Rasa
+        mode = get_user_mode(user_id)
+        if mode == "rasa":
+            await bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+            responses = await get_bot_response(data, user_id, mode, debug_mode=False)
+            
+            # --- НОВОЕ: Обработка ответа от Rasa ---
+            for resp_data in responses:
+                norm = normalize_message(resp_data)
+                
+                # Если Rasa прислала новые кнопки (ответ на /search_more),
+                # мы должны ОТРЕДАКТИРОВАТЬ старое сообщение, а не слать новое.
+                if data == '/search_more' and norm.get('buttons'):
+                    # Собираем новую клавиатуру
+                    new_markup = None
+                    if norm["buttons_type"] == "inline":
+                        inline_markup = types.InlineKeyboardMarkup(row_width=1)
+                        for row in norm["buttons"]:
+                            buttons_in_row = [
+                                types.InlineKeyboardButton(btn["text"], callback_data=btn.get("callback_data")) for btn in row
+                            ]
+                            inline_markup.row(*buttons_in_row)
+                        new_markup = inline_markup
+                    
+                    # Редактируем старое сообщение, заменяя в нем кнопки
+                    await message.edit_text(norm.get('text', 'Выберите вариант:'), reply_markup=new_markup)
+
+                else:
+                    # В остальных случаях (ответ на выбор) просто отправляем новое сообщение
+                    await send_normalized_message(message, norm)
+        
+        await callback_query.answer()
+        return
+
+    # Старая логика для кнопок настроек
     if data == "set_mode_rasa":
         update_user_settings(user_id, {"mode": "rasa"})
         await callback_query.answer("Режим переключен на Rasa")

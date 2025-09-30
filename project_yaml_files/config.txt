@@ -4,7 +4,6 @@ language: ru
 
 pipeline:
 - name: WhitespaceTokenizer
-- name: RegexEntityExtractor
 - name: LanguageModelFeaturizer
   model_name: "bert"
   model_weights: "bert-base-multilingual-cased"

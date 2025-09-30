@@ -63,6 +63,7 @@ def normalize_message(msg: dict) -> dict:
 async def send_normalized_message(message: types.Message, norm: dict):
     """
     Отправляет нормализованное сообщение от Rasa, используя `send_long_message` для текста.
+    (ИСПРАВЛЕННАЯ ВЕРСИЯ)
     """
     if "file" in norm and norm["file"]:
         await message.answer_document(norm["file"])
@@ -71,19 +72,25 @@ async def send_normalized_message(message: types.Message, norm: dict):
     markup = None
     if norm["buttons"]:
         if norm["buttons_type"] == "inline":
-            inline_markup = types.InlineKeyboardMarkup()
+            inline_markup = types.InlineKeyboardMarkup(row_width=1) # row_width=1 для кнопок друг под другом
             for row in norm["buttons"]:
-                inline_markup.row(*[types.InlineKeyboardButton(btn["text"], url=btn.get("url")) for btn in row])
+                # ЭТОТ БЛОК ТЕПЕРЬ ПОДДЕРЖИВАЕТ И URL, И CALLBACK_DATA
+                buttons_in_row = [
+                    types.InlineKeyboardButton(
+                        btn["text"], 
+                        url=btn.get("url"), 
+                        callback_data=btn.get("callback_data")
+                    ) for btn in row
+                ]
+                inline_markup.row(*buttons_in_row)
             markup = inline_markup
         elif norm["buttons_type"] == "reply":
-            reply_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            reply_markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
             for row in norm["buttons"]:
                 reply_markup.row(*[types.KeyboardButton(btn["text"]) for btn in row])
             markup = reply_markup
 
     if norm["image"]:
-        # Для фото текст отправляется как caption, у которого лимит меньше (1024),
-        # поэтому длинный текст нужно отправить отдельно.
         if norm["text"] and len(norm["text"]) > 1024:
             await message.answer_photo(norm["image"], reply_markup=markup)
             await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"))
@@ -91,9 +98,37 @@ async def send_normalized_message(message: types.Message, norm: dict):
             await message.answer_photo(norm["image"], caption=norm["text"], reply_markup=markup, parse_mode=norm.get("parse_mode"))
         return
 
+    # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Теперь мы отправляем текст ВМЕСТЕ с клавиатурой, а не отдельно
     if norm["text"]:
-        await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"))
+        # Для длинных сообщений клавиатура прикрепится к последней части
+        await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
 
-    if markup and not norm["text"] and not norm["image"]:
+    # Этот блок сработает, если есть только кнопки без текста
+    elif markup:
          await message.answer("Выберите вариант:", reply_markup=markup)
-# --- КОНЕЦ ФАЙЛА TelegramBot/bot_utils.py ---
+
+# Также нужно немного доработать send_long_message, чтобы он принимал reply_markup
+async def send_long_message(message: types.Message, text: str, parse_mode: str = None, reply_markup=None):
+    if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+        # Отправляем с клавиатурой, если это единственная часть
+        await message.answer(text, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
+        return
+
+    parts = text.split('\n')
+    current_message = ""
+    total_parts = len(parts)
+    for i, part in enumerate(parts):
+        # Клавиатуру прикрепляем только к последнему сообщению
+        current_markup = reply_markup if i == total_parts - 1 else None
+        
+        if len(current_message) + len(part) + 1 > TELEGRAM_MAX_MESSAGE_LENGTH:
+            await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True)
+            current_message = part
+        else:
+            if current_message:
+                current_message += "\n"
+            current_message += part
+
+    if current_message:
+        await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
