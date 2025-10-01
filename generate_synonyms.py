@@ -7,9 +7,7 @@ import psycopg2
 from dotenv import load_dotenv
 
 # --- НАСТРОЙКИ ---
-# Путь, куда будут сохранены синонимы для ПОЛНЫХ ФРАЗ
 SYNONYM_FULL_PHRASE_FILE_PATH = Path("RasaProject/data/object_off_synonyms.yml")
-# Путь, куда будут сохранены синонимы для ОБЩИХ (первых) слов
 SYNONYM_COMMON_NAME_FILE_PATH = Path("RasaProject/data/common_names_synonyms.yml")
 # -----------------
 
@@ -48,18 +46,48 @@ def generate_synonym_files():
     with open(SYNONYM_FULL_PHRASE_FILE_PATH, 'w', encoding='utf-8') as f:
         f.write('version: "3.1"\n\nnlu:\n')
         for name in tqdm(canonical_names, desc="Генерация полных фраз"):
-            # ... (здесь используется сложная логика согласования фраз) ...
-            # Для упрощения и надежности, мы будем склонять только последнее слово,
-            # что покрывает большинство случаев.
             words = name.split()
-            if not words: continue
-            
+            if len(words) < 2: continue
+
             all_phrases = set()
-            last_word_parse = morph.parse(words[-1])[0]
-            for form in last_word_parse.lexeme:
-                phrase = " ".join(words[:-1] + [form.word])
-                all_phrases.add(phrase.lower())
             
+            main_word_index = -1
+            for i, word in enumerate(words):
+                if 'NOUN' in morph.parse(word)[0].tag:
+                    main_word_index = i
+                    break
+            if main_word_index == -1: main_word_index = len(words) - 1
+
+            main_word_parse = morph.parse(words[main_word_index])[0]
+
+            for main_word_form in main_word_parse.lexeme:
+                # --- НАЧАЛО ГЛАВНОГО ИСПРАВЛЕНИЯ ---
+                required_grammemes = set()
+                if main_word_form.tag.case:
+                    required_grammemes.add(main_word_form.tag.case)
+                if main_word_form.tag.number:
+                    required_grammemes.add(main_word_form.tag.number)
+                # --- КОНЕЦ ГЛАВНОГО ИСПРАВЛЕНИЯ ---
+
+                new_phrase_words = []
+                is_possible = True
+                
+                for i, word in enumerate(words):
+                    p = morph.parse(word)[0]
+                    if 'ADJF' in p.tag or 'PRTF' in p.tag:
+                        inflected = p.inflect(required_grammemes) # Используем безопасный набор граммем
+                        if inflected:
+                            new_phrase_words.append(inflected.word)
+                        else:
+                            is_possible = False; break
+                    elif i == main_word_index:
+                        new_phrase_words.append(main_word_form.word)
+                    else:
+                        new_phrase_words.append(word)
+                
+                if is_possible:
+                    all_phrases.add(" ".join(new_phrase_words).lower())
+
             syn_list = sorted([phrase for phrase in all_phrases if phrase != name.lower()])
             if syn_list:
                 f.write(f'- synonym: {name}\n')
