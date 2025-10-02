@@ -29,3 +29,6 @@ faiss_index_path/
 .idea/
 .vscode/
 
+**/data/geo_place_synonyms.yml
+**/data/lookup/
+

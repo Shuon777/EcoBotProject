@@ -1,4 +1,3 @@
-# --- НАЧАЛО ФАЙЛА RasaProject/actions/actions.py ---
 from typing import Any, Text, Dict, List, Optional
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
@@ -42,21 +41,24 @@ class ActionGetDescription(Action):
         return "action_get_description"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        # Берем название из слота "КАК ЕСТЬ". Оно уже должно быть каноничным.
-        object_name = tracker.get_slot("object_OFF")
+        object_nom = tracker.get_slot("object_OFF")
         
-        if not object_name:
+        if not object_nom:
             dispatcher.utter_message(text="Пожалуйста, уточните, о каком объекте вы спрашиваете.")
             return []
             
         user_id = tracker.sender_id
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
-        logger.debug(f"ActionGetDescription: Получаю описание для объекта '{object_name}' (без нормализации).")
+        logger.debug(f"ActionGetDescription: Получаю описание для объекта '{object_nom}' (без нормализации).")
 
         try:
-            # Отправляем в API точное название, которое получили от NLU
-            url = f"{API_URLS['get_description']}?species_name={object_name}&debug_mode={str(debug_mode).lower()}"
+            canonical_object = handle_known_object_check(dispatcher, tracker, object_nom)
+            if not canonical_object:
+                return reset_slots_on_error()
+            
+            reset_clot = [SlotSet("object_OFF", canonical_object)]
+            url = f"{API_URLS['get_description']}?species_name={canonical_object}&debug_mode={str(debug_mode).lower()}"
             response = requests.get(url, timeout=DEFAULT_TIMEOUT)
             
             data = response.json() if response.ok and response.text else {}
@@ -74,12 +76,12 @@ class ActionGetDescription(Action):
                     text = first_item
 
             if not response.ok or not text:
-                logger.warning(f"Описание для '{object_name}' не найдено. Проверяем fallback.")
+                logger.warning(f"Описание для '{canonical_object}' не найдено. Проверяем fallback.")
                 if get_user_fallback_setting(user_id):
                     dispatcher.utter_message(text="Этого нет в моей базе знаний. Минутку, обращаюсь к GigaChat...")
                     return [FollowupAction("action_execute_gigachat_fallback")]
                 else:
-                    dispatcher.utter_message(text=f"К сожалению, у меня нет описания для '{object_name}'.")
+                    dispatcher.utter_message(text=f"К сожалению, у меня нет описания для '{canonical_object}'.")
                 return reset_slots_on_error()
 
             dispatcher.utter_message(text=text)
@@ -93,7 +95,7 @@ class ActionGetDescription(Action):
             dispatcher.utter_message(text="Ой, что-то пошло не так. Попробуйте еще раз.")
             return reset_slots_on_error()
         
-        return []
+        return reset_clot
 
 class ActionExecuteGigachatFallback(Action):
     def name(self) -> Text:
@@ -117,15 +119,19 @@ class ActionGetPic(Action):
         return "action_get_picture"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_object = tracker.get_slot("object_OFF")
-        object_nom = normalize_to_nominative(raw_object)
+        object_nom = tracker.get_slot("object_OFF")
         raw_feats = tracker.get_slot("feature") or [] 
         features = classify_features(raw_feats)
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
         
         try:
+            canonical_object = handle_known_object_check(dispatcher, tracker, object_nom)
+            if not canonical_object:
+                return reset_slots_on_error()
+            
+            reset_clot = [SlotSet("object_OFF", canonical_object)]
             url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
-            payload = {"species_name": object_nom}
+            payload = {"species_name": canonical_object}
             if features:
                 payload["features"] = features
             
@@ -139,7 +145,7 @@ class ActionGetPic(Action):
                 return []
 
             if not response.ok or data.get("status") == "not_found" or not data.get("images"):
-                dispatcher.utter_message(text=f"Извините, я не нашел изображений для '{raw_object}'.")
+                dispatcher.utter_message(text=f"Извините, я не нашел изображений для '{canonical_object}'.")
                 return reset_slots_on_error()
 
             images = data.get("images", [])
@@ -156,7 +162,7 @@ class ActionGetPic(Action):
                         logger.warning(f"Не удалось проверить URL изображения {image_url}: {e}")
             
             if sent_images_count == 0:
-                dispatcher.utter_message(text=f"Извините, не удалось загрузить ни одного изображения для '{raw_object}'.")
+                dispatcher.utter_message(text=f"Извините, не удалось загрузить ни одного изображения для '{canonical_object}'.")
                 return reset_slots_on_error()
             
         except requests.exceptions.RequestException as e:
@@ -167,35 +173,36 @@ class ActionGetPic(Action):
             logger.error(f"Непредвиденная ошибка в ActionGetPic: {e}", exc_info=True)
             dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-        return []
+        return reset_clot
 
 class ActionNeasrest(Action):
     def name(self) -> Text:
         return "action_neasrest"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_object = tracker.get_slot("object_OFF")
-        raw_geo_place = tracker.get_slot("geo_place")
-        object_nom = normalize_to_nominative(raw_object)
-        geo_nom = normalize_to_nominative(raw_geo_place)
+        object_nom = tracker.get_slot("object_OFF")
+        geo_nom = tracker.get_slot("geo_place")
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
-            if not handle_known_object_check(dispatcher, tracker, object_nom):
+            canonical_object = handle_known_object_check(dispatcher, tracker, object_nom)
+            if not canonical_object:
                 return reset_slots_on_error()
+            
+            reset_clot = [SlotSet("object_OFF", canonical_object)]
         
             coords_url = API_URLS["get_coords"]
             coords_response = requests.post(coords_url, json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT)
             
             if not coords_response.ok or coords_response.json().get("status") == "not_found":
-                dispatcher.utter_message(text=f"Извините, не удалось найти координаты для места '{raw_geo_place}'.")
+                dispatcher.utter_message(text=f"Извините, не удалось найти координаты для места '{geo_nom}'.")
                 return reset_slots_on_error()
 
             coords_data = coords_response.json()
             map_url = f"{API_URLS['coords_to_map']}?debug_mode={str(debug_mode).lower()}"
             map_payload = {
                 "latitude": coords_data.get("latitude"), "longitude": coords_data.get("longitude"), 
-                "radius_km": 35, "species_name": object_nom, "object_type": "geographical_entity"
+                "radius_km": 35, "species_name": canonical_object, "object_type": "geographical_entity"
             }
             map_response = requests.post(map_url, json=map_payload, timeout=DEFAULT_TIMEOUT)
             map_data = map_response.json()
@@ -211,11 +218,11 @@ class ActionNeasrest(Action):
             unique_names = sorted(list(set(name.capitalize() for name in names)))
 
             if unique_names:
-                message_text = (f"📍 Рядом с '{raw_geo_place}' вы можете встретить '{raw_object}' в следующих местах:\n" + "• " + "\n• ".join(unique_names))
+                message_text = (f"📍 Рядом с '{geo_nom}' вы можете встретить '{canonical_object}' в следующих местах:\n" + "• " + "\n• ".join(unique_names))
                 dispatcher.utter_message(text=message_text)
             
             if map_data.get("status") == "no_objects":
-                dispatcher.utter_message(text=f"К сожалению, я не нашел '{raw_object}' поблизости от '{raw_geo_place}'.")
+                dispatcher.utter_message(text=f"К сожалению, я не нашел '{canonical_object}' поблизости от '{geo_nom}'.")
             
             if map_data.get("interactive_map") and map_data.get("static_map"):
                 dispatcher.utter_message(json_message={"photo": map_data["static_map"], "reply_markup": {"inline_keyboard": [[{"text": "🌍 Перейти на карту", "url": map_data["interactive_map"]}]]}})
@@ -230,25 +237,26 @@ class ActionNeasrest(Action):
             logger.error(f"Непредвиденная ошибка в ActionNeasrest: {e}", exc_info=True)
             dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-        return []
+        return reset_clot
     
 class ActionDrawLocateMap(Action):
     def name(self) -> Text:
         return "action_draw_locate_map"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_object = tracker.get_slot("object_OFF")
-        object_nom = normalize_to_nominative(raw_object)
+        object_nom = tracker.get_slot("object_OFF")
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
-            if not handle_known_object_check(dispatcher, tracker, object_nom):
+            canonical_object = handle_known_object_check(dispatcher, tracker, object_nom)
+            if not canonical_object:
                 return reset_slots_on_error()
             
+            reset_clot = [SlotSet("object_OFF", canonical_object)]
             url = f"{API_URLS['coords_to_map']}?debug_mode={str(debug_mode).lower()}"
             payload = {
                 "latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, 
-                "species_name": object_nom, "object_type": "geographical_entity"
+                "species_name": canonical_object, "object_type": "geographical_entity"
             }
             map_response = requests.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
             map_data = map_response.json()
@@ -261,13 +269,13 @@ class ActionDrawLocateMap(Action):
                 return reset_slots_on_error()
             
             if map_data.get("status") == "no_objects":
-                dispatcher.utter_message(text=f"К сожалению, я не смог найти ареал обитания для '{raw_object}'.")
+                dispatcher.utter_message(text=f"К сожалению, я не смог найти ареал обитания для '{canonical_object}'.")
                 return reset_slots_on_error()
 
             names = map_data.get("names", [])
             unique_names = sorted(list(set(name.capitalize() for name in names)))
             if unique_names:
-                message_text = (f"📍 '{raw_object.capitalize()}' встречается в следующих местах:\n" + "• " + "\n• ".join(unique_names))
+                message_text = (f"📍 '{canonical_object.capitalize()}' встречается в следующих местах:\n" + "• " + "\n• ".join(unique_names))
                 dispatcher.utter_message(text=message_text)
 
             if map_data.get("interactive_map") and map_data.get("static_map"):
@@ -281,15 +289,14 @@ class ActionDrawLocateMap(Action):
             logger.error(f"Непредвиденная ошибка в ActionDrawLocateMap: {e}", exc_info=True)
             dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
-        return []
+        return reset_clot
 
 class ActionObjectsInPolygon(Action):
     def name(self) -> Text:
         return "action_objects_in_polygon"
         
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_geo_place = tracker.get_slot("geo_place")
-        geo_nom = normalize_to_nominative(raw_geo_place)
+        geo_nom = tracker.get_slot("geo_place")
         debug_mode = tracker.latest_message.get("metadata", {}).get("debug_mode", False)
 
         try:
@@ -302,16 +309,16 @@ class ActionObjectsInPolygon(Action):
                 dispatcher.utter_message(json_message={"type": "debug", "content": data["debug"]})
 
             if not response.ok:
-                 dispatcher.utter_message(text=f"Не удалось найти полигон для места '{raw_geo_place}'.")
+                 dispatcher.utter_message(text=f"Не удалось найти полигон для места '{geo_nom}'.")
                  return reset_slots_on_error()
 
             unique_names = sorted(list(set(name.capitalize() for name in data.get("all_biological_names", []))))
             
             if unique_names:
-                flora_list = f"🌿 В районе '{raw_geo_place}' найдены следующие объекты:\n" + "• " + "\n• ".join(unique_names)
+                flora_list = f"🌿 В районе '{geo_nom}' найдены следующие объекты:\n" + "• " + "\n• ".join(unique_names)
                 dispatcher.utter_message(text=flora_list)
             else:
-                dispatcher.utter_message(text=f"В районе '{raw_geo_place}' не найдено известных мне объектов.")
+                dispatcher.utter_message(text=f"В районе '{geo_nom}' не найдено известных мне объектов.")
 
             if data.get("interactive_map") and data.get("static_map"):
                 dispatcher.utter_message(json_message={"photo": data["static_map"], "reply_markup": { "inline_keyboard": [[{"text": "🌍 Показать на карте", "url": data["interactive_map"]}]]}})
@@ -331,12 +338,10 @@ class ActionAskEcoBot(Action):
         return "action_ask_ecobot"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        raw_object = tracker.get_slot("object_OFF")
-        if not raw_object:
+        object_nom = tracker.get_slot("object_OFF")
+        if not object_nom:
             dispatcher.utter_message(text="К сожалению, я не имею информацию об объекте, о котором вы спрашиваете.")
             return []
-
-        object_nom = normalize_to_nominative(raw_object)
         if not handle_known_object_check(dispatcher, tracker, object_nom):
             return reset_slots_on_error()
 
@@ -455,7 +460,9 @@ class ActionDisambiguateDescription(Action):
         return "action_disambiguate_description"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        # EntitySynonymMapper уже привел "иву" -> "ива" или "иву козью" -> "Ива козья"
+        options = tracker.get_slot("disambiguation_options")
+        if not options:
+            dispatcher.utter_message(text="Извините, я не смог определить ваш запрос.")
         object_name = tracker.get_slot("object_OFF")
         
         if not object_name:
