@@ -45,20 +45,30 @@ rules:
       - intent: locate_object_on_map
       - action: action_draw_locate_map
 
-
-  - rule: Дать информацию о объекте флоры или фауны
-    steps:
-      - intent: tell_about_OFF_intent
-      - action: action_get_description
-
-
   - rule: Ближайшее
     steps:
       - intent: nerasrest_place_by_object_intent
       - action: action_neasrest
 
-  
   - rule: Объекты в полигоне
     steps:
       - intent: objects_in_polygon_intent
       - action: action_objects_in_polygon
+
+  - rule: Запуск диалога уточнения для описания объекта
+    steps:
+    - intent: tell_about_OFF_intent
+    - action: action_disambiguate_description
+
+  - rule: Обработка нажатия кнопки выбора (через RulePolicy)
+    steps:
+    - intent: select_option
+    - action: action_retrieve_selection
+    - action: action_get_description
+    - action: action_clear_search_offset
+    
+  - rule: Обработка кнопки "Поискать еще" (через RulePolicy)
+    steps:
+    - intent: search_more
+    - action: action_disambiguate_description
+    - action: action_listen

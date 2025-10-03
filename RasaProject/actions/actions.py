@@ -460,9 +460,6 @@ class ActionDisambiguateDescription(Action):
         return "action_disambiguate_description"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        options = tracker.get_slot("disambiguation_options")
-        if not options:
-            dispatcher.utter_message(text="Извините, я не смог определить ваш запрос.")
         object_name = tracker.get_slot("object_OFF")
         
         if not object_name:

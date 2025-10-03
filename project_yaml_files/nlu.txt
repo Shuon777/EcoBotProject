@@ -276,3 +276,13 @@ nlu:
     - Список простых вопросов
     - Варианты простых вопросов
     - Что есть из простых вопросов
+
+- intent: select_option
+- intent: search_more
+
+- regex: index
+  examples: |
+    - \d+
+
+
+

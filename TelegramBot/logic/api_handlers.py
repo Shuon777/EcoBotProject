@@ -1,8 +1,7 @@
-# --- НАЧАЛО ФАЙЛА TelegramBot/handlers.py ---
 import aiohttp
 import logging
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
-from settings_manager import get_user_settings
+from utils.settings_manager import get_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -219,10 +218,29 @@ async def handle_objects_in_polygon(result: dict, debug_mode: bool) -> list:
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_objects_in_polygon: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка."}]
-
-async def handle_intent(result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
-    intent = result.get("intent")
     
+async def handle_comparison(result: dict, debug_mode: bool) -> list:
+    """Генерирует сравнение двух объектов с помощью LLM."""
+    object1 = result.get("object1")
+    object2 = result.get("object2")
+
+    if not object1 or not object2:
+        return [{"type": "text", "content": "Недостаточно данных для сравнения."}]
+
+    # Можно добавить еще более детальный промпт
+    prompt = f"Сравни два объекта: '{object1}' и '{object2}'. Опиши их ключевые отличия в виде списка. Сделай акцент на самом главном (внешний вид, среда обитания, уникальные особенности)."
+
+    # Используем общий fallback-сервис для вызова GigaChat
+    comparison_text = await call_gigachat_fallback_service(prompt)
+
+    if comparison_text:
+        full_answer = f"Отлично! Вот основные отличия между **{object1}** и **{object2}**:\n\n{comparison_text}"
+        return [{"type": "text", "content": full_answer, "parse_mode": "Markdown"}]
+    else:
+        return [{"type": "text", "content": "Извините, не удалось сгенерировать сравнение."}]
+
+async def handle_intent(intent: str, result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+
     handler_kwargs = {"result": result, "debug_mode": debug_mode}
     if intent == "get_text":
         handler_kwargs.update({"user_id": user_id, "original_query": original_query})
@@ -233,6 +251,7 @@ async def handle_intent(result: dict, user_id: str, original_query: str, debug_m
         "get_intersection_object_on_map": handle_nearest,
         "get_location": handle_draw_locate_map,
         "get_objects_in_polygon": handle_objects_in_polygon,
+        "get_comparison": handle_comparison,
     }
 
     handler_func = handlers.get(intent)
@@ -244,4 +263,3 @@ async def handle_intent(result: dict, user_id: str, original_query: str, debug_m
     else:
         logger.warning(f"Неизвестный intent: {intent}")
         return [{"type": "text", "content": "Извините, я пока не умею обрабатывать такой запрос."}]
-# --- КОНЕЦ ФАЙЛА TelegramBot/handlers.py ---
