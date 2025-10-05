@@ -1,33 +1,44 @@
-# --- НАЧАЛО ФАЙЛА TelegramBot/bot_utils.py ---
+# --- НАЧАЛО ФАЙЛА TelegramBot/utils/bot_utils.py ---
 from aiogram import types
 import logging
 
 logger = logging.getLogger(__name__)
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
-async def send_long_message(message: types.Message, text: str, parse_mode: str = None):
+async def send_long_message(message: types.Message, text: str, parse_mode: str = None, reply_markup=None):
     """
-    Отправляет длинное сообщение, разбивая его на части, если необходимо.
+    Отправляет длинное сообщение, разбивая его на части.
+    Клавиатура (reply_markup) прикрепляется к последнему сообщению.
     """
     if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
-        await message.answer(text, parse_mode=parse_mode, disable_web_page_preview=True)
+        await message.answer(text, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
         return
 
     parts = text.split('\n')
     current_message = ""
+    total_parts = len(parts)
+    
+    # Разделяем текст на сообщения, не превышающие лимит
+    message_chunks = []
     for part in parts:
-        # Проверяем, не превысит ли добавление следующей части лимит
         if len(current_message) + len(part) + 1 > TELEGRAM_MAX_MESSAGE_LENGTH:
-            await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True)
+            message_chunks.append(current_message)
             current_message = part
         else:
-            if current_message:  # Добавляем перенос строки, если это не первая часть
+            if current_message:
                 current_message += "\n"
             current_message += part
-
-    # Отправляем оставшуюся часть
     if current_message:
-        await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True)
+        message_chunks.append(current_message)
+
+    # Отправляем все части, кроме последней
+    for i in range(len(message_chunks) - 1):
+        await message.answer(message_chunks[i], parse_mode=parse_mode, disable_web_page_preview=True)
+    
+    # Отправляем последнюю часть с клавиатурой
+    if message_chunks:
+        await message.answer(message_chunks[-1], parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
+
 
 def normalize_message(msg: dict) -> dict:
     """
@@ -42,14 +53,12 @@ def normalize_message(msg: dict) -> dict:
     if "attachment" in msg and msg["attachment"].get("type") == "file":
         result["file"] = msg["attachment"]["payload"]["url"]
     
+    # Поддержка формата custom от Rasa
     if "custom" in msg:
         custom = msg["custom"]
-        if "text" in custom:
-            result["text"] = custom["text"]
-        if "photo" in custom:
-            result["image"] = custom["photo"]
-        if "parse_mode" in custom:
-            result["parse_mode"] = custom["parse_mode"]
+        if "text" in custom: result["text"] = custom["text"]
+        if "photo" in custom: result["image"] = custom["photo"]
+        if "parse_mode" in custom: result["parse_mode"] = custom["parse_mode"]
         if "reply_markup" in custom:
             markup = custom["reply_markup"]
             if "inline_keyboard" in markup:
@@ -62,8 +71,8 @@ def normalize_message(msg: dict) -> dict:
 
 async def send_normalized_message(message: types.Message, norm: dict):
     """
-    Отправляет нормализованное сообщение от Rasa, используя `send_long_message` для текста.
-    (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+    Отправляет нормализованное сообщение от Rasa, используя `send_long_message` для текста
+    и корректно обрабатывая клавиатуры.
     """
     if "file" in norm and norm["file"]:
         await message.answer_document(norm["file"])
@@ -72,9 +81,8 @@ async def send_normalized_message(message: types.Message, norm: dict):
     markup = None
     if norm["buttons"]:
         if norm["buttons_type"] == "inline":
-            inline_markup = types.InlineKeyboardMarkup(row_width=1) # row_width=1 для кнопок друг под другом
+            inline_markup = types.InlineKeyboardMarkup(row_width=1)
             for row in norm["buttons"]:
-                # ЭТОТ БЛОК ТЕПЕРЬ ПОДДЕРЖИВАЕТ И URL, И CALLBACK_DATA
                 buttons_in_row = [
                     types.InlineKeyboardButton(
                         btn["text"], 
@@ -91,44 +99,18 @@ async def send_normalized_message(message: types.Message, norm: dict):
             markup = reply_markup
 
     if norm["image"]:
+        # Если подпись к картинке слишком длинная, отправляем ее отдельным сообщением
         if norm["text"] and len(norm["text"]) > 1024:
-            await message.answer_photo(norm["image"], reply_markup=markup)
-            await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"))
+            await message.answer_photo(norm["image"])
+            # Отправляем длинный текст с кнопками уже после фото
+            await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
         else:
             await message.answer_photo(norm["image"], caption=norm["text"], reply_markup=markup, parse_mode=norm.get("parse_mode"))
         return
 
-    # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Теперь мы отправляем текст ВМЕСТЕ с клавиатурой, а не отдельно
     if norm["text"]:
-        # Для длинных сообщений клавиатура прикрепится к последней части
         await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
-
     # Этот блок сработает, если есть только кнопки без текста
     elif markup:
          await message.answer("Выберите вариант:", reply_markup=markup)
-
-# Также нужно немного доработать send_long_message, чтобы он принимал reply_markup
-async def send_long_message(message: types.Message, text: str, parse_mode: str = None, reply_markup=None):
-    if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
-        # Отправляем с клавиатурой, если это единственная часть
-        await message.answer(text, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
-        return
-
-    parts = text.split('\n')
-    current_message = ""
-    total_parts = len(parts)
-    for i, part in enumerate(parts):
-        # Клавиатуру прикрепляем только к последнему сообщению
-        current_markup = reply_markup if i == total_parts - 1 else None
-        
-        if len(current_message) + len(part) + 1 > TELEGRAM_MAX_MESSAGE_LENGTH:
-            await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True)
-            current_message = part
-        else:
-            if current_message:
-                current_message += "\n"
-            current_message += part
-
-    if current_message:
-        await message.answer(current_message, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
+# --- КОНЕЦ ФАЙЛА TelegramBot/utils/bot_utils.py ---
