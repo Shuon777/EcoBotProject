@@ -11,6 +11,9 @@ from utils.bot_utils import normalize_message, send_normalized_message
 logger = logging.getLogger(__name__)
 
 class RasaHandler:
+    def __init__(self, session: aiohttp.ClientSession):
+        self.session = session
+        
     async def process_message(self, message: types.Message):
         """Обрабатывает текстовое сообщение в режиме Rasa."""
         user_id = str(message.from_user.id)
@@ -19,16 +22,15 @@ class RasaHandler:
         await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
         payload = {"sender": user_id, "message": query, "metadata": {}}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(RASA_WEBHOOK_URL, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-                    if resp.status == 200:
-                        rasa_responses = await resp.json()
-                        for r in (rasa_responses or []):
-                            norm = normalize_message(r)
-                            await send_normalized_message(message, norm)
-                    else:
-                        logger.error(f"Ошибка при обращении к Rasa: {resp.status} - {await resp.text()}")
-                        await message.answer("Ошибка при обращении к Rasa.")
+            async with self.session.post(RASA_WEBHOOK_URL, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+                if resp.status == 200:
+                    rasa_responses = await resp.json()
+                    for r in (rasa_responses or []):
+                        norm = normalize_message(r)
+                        await send_normalized_message(message, norm)
+                else:
+                    logger.error(f"Ошибка при обращении к Rasa: {resp.status} - {await resp.text()}")
+                    await message.answer("Ошибка при обращении к Rasa.")
         except Exception as e:
             logger.error(f"Не удалось подключиться к серверу Rasa: {e}")
             await message.answer("Мой основной обработчик Rasa сейчас недоступен.")
@@ -48,20 +50,19 @@ class RasaHandler:
         await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
         payload = {"sender": user_id, "message": data, "metadata": {}}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(RASA_WEBHOOK_URL, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-                    if resp.status == 200:
-                        rasa_responses = await resp.json()
-                        for r in (rasa_responses or []):
-                            norm = normalize_message(r)
-                            if data == '/search_more' and norm.get('buttons'):
-                                inline_markup = InlineKeyboardMarkup(row_width=1)
-                                for row in norm.get("buttons", []):
-                                    buttons_in_row = [InlineKeyboardButton(btn["text"], callback_data=btn.get("callback_data")) for btn in row]
-                                    inline_markup.row(*buttons_in_row)
-                                await message.edit_text(norm.get('text', 'Выберите вариант:'), reply_markup=inline_markup)
-                            else:
-                                await send_normalized_message(message, norm)
+            async with self.session.post(RASA_WEBHOOK_URL, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+                if resp.status == 200:
+                    rasa_responses = await resp.json()
+                    for r in (rasa_responses or []):
+                        norm = normalize_message(r)
+                        if data == '/search_more' and norm.get('buttons'):
+                            inline_markup = InlineKeyboardMarkup(row_width=1)
+                            for row in norm.get("buttons", []):
+                                buttons_in_row = [InlineKeyboardButton(btn["text"], callback_data=btn.get("callback_data")) for btn in row]
+                                inline_markup.row(*buttons_in_row)
+                            await message.edit_text(norm.get('text', 'Выберите вариант:'), reply_markup=inline_markup)
+                        else:
+                            await send_normalized_message(message, norm)
         except Exception as e:
              logger.error(f"Ошибка при обработке callback для Rasa: {e}")
              await message.answer("Произошла ошибка при обработке вашего выбора.")
