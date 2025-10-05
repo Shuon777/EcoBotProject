@@ -181,7 +181,7 @@ async def handle_nearest(session: aiohttp.ClientSession, result: dict, debug_mod
                 return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
             coords = await resp.json()
 
-        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom}
+        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom, "object_type": "biological_entity"}
         return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode, geo_nom)
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
@@ -189,7 +189,7 @@ async def handle_nearest(session: aiohttp.ClientSession, result: dict, debug_mod
 
 async def handle_draw_locate_map(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
     object_nom = result.get("object")
-    payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom}
+    payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom, "object_type": "geographical_entity"}
     try:
         return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
     except Exception as e:
