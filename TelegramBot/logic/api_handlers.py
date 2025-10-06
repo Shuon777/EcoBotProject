@@ -3,6 +3,7 @@
 import aiohttp
 import asyncio
 import logging
+import base64
 import json
 from typing import Dict, Any, List
 
@@ -57,8 +58,15 @@ async def handle_get_picture(session: aiohttp.ClientSession, result: dict, debug
                 logger.error(f"RAW RESPONSE TEXT: {raw_text}")
                 return [{"type": "text", "content": f"Ошибка сервера: неверный формат ответа (status {resp.status})."}]
 
+            # === ИЗМЕНЕНИЕ ЗДЕСЬ: Передаем user_id в fallback ===
             if not resp.ok or data.get("status") == "not_found" or not data.get("images"):
-                return [{"type": "text", "content": f"Извините, я не нашел изображений для '{object_nom}' с такими признаками."}]
+                # Проверяем, есть ли признаки для упрощения
+                if len(features) >= 1:  # Если есть хотя бы один признак - предлагаем упрощение
+                    # Получаем user_id из result (должен передаваться из gigachat_handler)
+                    user_id = result.get("user_id", "unknown")
+                    return await handle_picture_fallback(session, result, debug_mode, user_id)
+                else:
+                    return [{"type": "text", "content": f"Извините, я не нашел изображений для '{object_nom}'."}]
 
             images = data.get("images", [])
             sent_images_count = 0
@@ -85,6 +93,124 @@ async def handle_get_picture(session: aiohttp.ClientSession, result: dict, debug
 
     logger.info(f"--- Завершение handle_get_picture. Отправляется {len(messages)} сообщений. ---")
     return messages
+
+async def check_simplified_search(session: aiohttp.ClientSession, object_nom: str, features: dict, debug_mode: bool) -> bool:
+    """
+    Проверяет, вернет ли упрощенный запрос результаты
+    """
+    try:
+        url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
+        payload = {"species_name": object_nom, "features": features}
+        
+        logger.info(f"Проверка упрощенного запроса: {object_nom} с features: {features}")
+        
+        async with session.post(url, json=payload, timeout=10) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                has_images = bool(data.get("images"))
+                logger.info(f"Результат проверки для {object_nom} {features}: {has_images}")
+                return has_images
+            logger.warning(f"API вернул статус {resp.status} для проверки {object_nom}")
+            return False
+    except asyncio.TimeoutError:
+        logger.warning(f"Таймаут при проверке упрощенного запроса для {object_nom}")
+        return False
+    except Exception as e:
+        logger.warning(f"Ошибка проверки упрощенного запроса для {object_nom}: {e}")
+        return False
+
+async def handle_picture_fallback(session: aiohttp.ClientSession, result: dict, debug_mode: bool, user_id: str) -> list:
+    """
+    Создает варианты упрощения, предварительно проверяя их в API
+    """
+    object_nom = result.get("object")
+    original_features = result.get("features", {})
+    
+    logger.info(f"Обработка fallback для {object_nom} с features: {original_features}")
+    
+    fallback_options = []
+    
+    # Проверяем каждый возможный вариант упрощения
+    if original_features.get("season"):
+        # Вариант 1: Без сезона
+        test_features = original_features.copy()
+        test_features.pop("season")
+        if await check_simplified_search(session, object_nom, test_features, debug_mode):
+            fallback_options.append({
+                "text": f"❄️ Без сезона",
+                "callback_data": f"fallback:no_season:{object_nom}",
+                "features": test_features
+            })
+    
+    if original_features.get("habitat"):
+        # Вариант 2: Без места обитания
+        test_features = original_features.copy()
+        test_features.pop("habitat")
+        if await check_simplified_search(session, object_nom, test_features, debug_mode):
+            fallback_options.append({
+                "text": f"🌲 Без места", 
+                "callback_data": f"fallback:no_habitat:{object_nom}",
+                "features": test_features
+            })
+    
+    # Вариант 3: Только основной объект
+    if len(original_features) >= 1:
+        test_features = {}
+        if await check_simplified_search(session, object_nom, test_features, debug_mode):
+            fallback_options.append({
+                "text": f"🖼️ Только объект",
+                "callback_data": f"fallback:basic:{object_nom}",
+                "features": test_features
+            })
+    
+    # Если нет рабочих вариантов упрощения
+    if not fallback_options:
+        logger.info(f"Не найдено рабочих упрощений для {object_nom}")
+        return [{"type": "text", "content": f"Извините, не нашел изображений для '{object_nom}' с любыми комбинациями признаков."}]
+    
+    # Сохраняем исходные features в Redis для этого пользователя
+    from utils.context_manager import RedisContextManager
+    context_manager = RedisContextManager()
+    fallback_key = f"fallback_features:{user_id}"
+    await context_manager.set_context(fallback_key, original_features)
+    
+    # Устанавливаем TTL 10 минут на случай если пользователь не нажмет кнопку
+    if context_manager.redis_client:
+        await context_manager.redis_client.expire(fallback_key, 600)
+    
+    logger.info(f"Сохранили fallback features для {user_id}: {original_features}")
+    
+    # Создаем кнопки
+    buttons = []
+    for i in range(0, len(fallback_options), 2):
+        row = fallback_options[i:i+2]
+        buttons.append([
+            {"text": btn["text"], "callback_data": btn["callback_data"]} 
+            for btn in row
+        ])
+    
+    # Формируем текст
+    feature_parts = []
+    if original_features.get("season"):
+        feature_parts.append(f"сезон «{original_features['season']}»")
+    if original_features.get("habitat"):
+        feature_parts.append(f"место «{original_features['habitat']}»")
+    if original_features.get("flowering"):
+        feature_parts.append("цветение")
+
+    # Красивое соединение: "сезон «Лето» и место «Луг»"
+    if len(feature_parts) == 1:
+        features_text = feature_parts[0]
+    elif len(feature_parts) == 2:
+        features_text = f"{feature_parts[0]} и {feature_parts[1]}"
+    else:
+        features_text = ", ".join(feature_parts[:-1]) + f" и {feature_parts[-1]}"
+
+    return [{
+        "type": "clarification", 
+        "content": f"🖼️ К сожалению, у меня нет фотографий {object_nom} сразу с {features_text}.\n\nДавайте попробуем упростить запрос? Вот что я нашел:",
+        "buttons": buttons
+    }]
 
 async def handle_get_description(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool, offset: int = 0) -> list:
     object_nom = result.get("object")

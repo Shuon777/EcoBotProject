@@ -1,5 +1,6 @@
 # --- НАЧАЛО ФАЙЛА: handlers/gigachat_handler.py ---
-
+import base64
+import json
 import logging
 import aiohttp
 from aiogram import types
@@ -67,6 +68,8 @@ class GigaChatHandler:
             if not is_request_complete(final_intent, final_entities):
                 await message.answer("Пожалуйста, уточните, о каком растении, животном или месте идет речь?")
                 return
+
+            final_entities["user_id"] = user_id
 
             responses = await handle_intent(
                 session=self.session, intent=final_intent, result=final_entities, 
@@ -239,5 +242,106 @@ class GigaChatHandler:
             await self.dialogue_manager.context_manager.set_context(user_id, {"history": [history[0]]})
             logger.info(f"[USER_ID: {user_id}] Контекст после сравнения обновлен. Последний объект: {object2}")
             return
+        
+        if data.startswith('fallback:'):
+            await self.handle_fallback_callback(callback_query)
 
-# --- КОНЕЦ ФАЙЛА: handlers/gigachat_handler.py ---
+    async def handle_fallback_callback(self, callback_query: types.CallbackQuery):
+        """
+        Обрабатывает выбор упрощения от пользователя
+        """
+        user_id = str(callback_query.from_user.id)
+        data = callback_query.data
+        message = callback_query.message
+        
+        try:
+            parts = data.split(':', 2)
+            fallback_type = parts[1]
+            object_nom = parts[2]
+            
+            # Получаем исходные features из Redis
+            from utils.context_manager import RedisContextManager
+            context_manager = RedisContextManager()
+            fallback_key = f"fallback_features:{user_id}"
+            original_features = await context_manager.get_context(fallback_key)
+            
+            if not original_features:
+                logger.error(f"Не найдены fallback features для {user_id}")
+                await callback_query.answer("Ошибка: контекст утерян, попробуйте начать поиск заново")
+                return
+            
+            logger.info(f"Восстановлены features из Redis для {user_id}: {original_features}")
+            
+            # Создаем упрощенные features на основе типа
+            features = original_features.copy()
+            
+            if fallback_type == "no_season":
+                features.pop("season", None)
+                logger.info(f"Упрощение: без сезона, оставляем {features}")
+            elif fallback_type == "no_habitat":
+                features.pop("habitat", None)
+                logger.info(f"Упрощение: без места, оставляем {features}")
+            elif fallback_type == "basic":
+                features = {}
+                logger.info(f"Упрощение: только объект")
+            
+            # Удаляем fallback features из Redis после использования
+            await context_manager.delete_context(fallback_key)
+            
+            # Убираем кнопки упрощения
+            await message.edit_reply_markup(reply_markup=None)
+            await callback_query.answer("Ищу упрощенный вариант...")
+            
+            # Создаем описание для нового запроса
+            feature_desc = []
+            if features.get("season"):
+                feature_desc.append(features['season'])
+            if features.get("habitat"):
+                feature_desc.append(f"в {features['habitat']}")
+                
+            features_text = " ".join(feature_desc)
+            simulated_query = f"Покажи {object_nom} {features_text}".strip()
+            
+            logger.info(f"Выполняем упрощенный запрос: {object_nom} с features: {features}")
+            
+            # Отправляем действие "печатает"
+            await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+            
+            # Выполняем поиск с упрощенными параметрами
+            responses = await handle_intent(
+                self.session, "get_picture", {"object": object_nom, "features": features},
+                user_id, simulated_query, False
+            )
+            
+            # === ИСПРАВЛЕНИЕ: Сохраняем УПРОЩЕННЫЙ вариант в основной контекст ===
+            # Создаем сущности для сохранения в историю
+            context_entities = {"object": object_nom}
+            if features:  # Добавляем features только если они есть
+                context_entities["features"] = features
+            
+            # Определяем категорию объекта
+            object_category = await self.qa.get_object_category(object_nom)
+            
+            # Сохраняем в основной контекст
+            await self.dialogue_manager.update_history(
+                user_id, "get_picture", context_entities, object_category
+            )
+            
+            logger.info(f"Сохранили упрощенный контекст в историю: {context_entities}")
+            
+            # Отправляем результаты
+            for resp in responses:
+                if resp["type"] == "text":
+                    await send_long_message(message, resp["content"])
+                elif resp["type"] == "image":
+                    await message.answer_photo(resp["content"])
+                elif resp["type"] == "clarification":
+                    kb = InlineKeyboardMarkup()
+                    for row in resp["buttons"]:
+                        kb.row(*[InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"]) for btn in row])
+                    await message.answer(resp["content"], reply_markup=kb)
+                    
+        except Exception as e:
+            logger.error(f"Ошибка обработки fallback callback: {e}", exc_info=True)
+            await message.answer("Произошла ошибка при упрощении запроса")
+            await callback_query.answer()

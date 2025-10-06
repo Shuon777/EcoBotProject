@@ -101,16 +101,36 @@ async def send_normalized_message(message: types.Message, norm: dict):
     if norm["image"]:
         # Если подпись к картинке слишком длинная, отправляем ее отдельным сообщением
         if norm["text"] and len(norm["text"]) > 1024:
-            await message.answer_photo(norm["image"])
+            sent_message = await message.answer_photo(norm["image"])
+            # Сохраняем context если есть
+            if "context" in norm:
+                sent_message.context = norm["context"]
             # Отправляем длинный текст с кнопками уже после фото
             await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
         else:
-            await message.answer_photo(norm["image"], caption=norm["text"], reply_markup=markup, parse_mode=norm.get("parse_mode"))
+            sent_message = await message.answer_photo(norm["image"], caption=norm["text"], reply_markup=markup, parse_mode=norm.get("parse_mode"))
+            # Сохраняем context если есть
+            if "context" in norm:
+                sent_message.context = norm["context"]
         return
 
     if norm["text"]:
-        await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
+        # Используем send_long_message для текста и сохраняем context
+        if markup:
+            # Если есть клавиатура, отправляем через answer
+            sent_message = await message.answer(norm["text"], parse_mode=norm.get("parse_mode"), disable_web_page_preview=True, reply_markup=markup)
+        else:
+            # Если нет клавиатуры, используем send_long_message
+            await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
+            # Для send_long_message context нужно сохранять иначе, так как оно отправляет несколько сообщений
+            # В этом случае context будет доступен только для первого сообщения
+            return
+        
+        # Сохраняем context в отправленное сообщение
+        if "context" in norm:
+            sent_message.context = norm["context"]
     # Этот блок сработает, если есть только кнопки без текста
     elif markup:
-         await message.answer("Выберите вариант:", reply_markup=markup)
-# --- КОНЕЦ ФАЙЛА TelegramBot/utils/bot_utils.py ---
+         sent_message = await message.answer("Выберите вариант:", reply_markup=markup)
+         if "context" in norm:
+             sent_message.context = norm["context"]
