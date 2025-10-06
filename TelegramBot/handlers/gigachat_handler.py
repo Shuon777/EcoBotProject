@@ -11,6 +11,7 @@ from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from logic.api_handlers import handle_intent
 from utils.bot_utils import send_long_message
+from config import API_URLS
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,7 @@ class GigaChatHandler:
             await message.edit_reply_markup(reply_markup=None)
             
             selected_object = data.split(':', 1)[1]
+            selected_object = selected_object.replace('_', ' ').replace('-', ':')
             logger.info(f"Пользователь уточнил объект: '{selected_object}'")
 
             simulated_text = f"Расскажи про {selected_object}"
@@ -245,6 +247,9 @@ class GigaChatHandler:
         
         if data.startswith('fallback:'):
             await self.handle_fallback_callback(callback_query)
+        
+        elif data.startswith('explore:'):
+            await self.handle_exploration_callback(callback_query)
 
     async def handle_fallback_callback(self, callback_query: types.CallbackQuery):
         """
@@ -345,3 +350,219 @@ class GigaChatHandler:
             logger.error(f"Ошибка обработки fallback callback: {e}", exc_info=True)
             await message.answer("Произошла ошибка при упрощении запроса")
             await callback_query.answer()
+
+    async def handle_exploration_callback(self, callback_query: types.CallbackQuery):
+        """
+        Обрабатывает выбор сценария исследования локации
+        """
+        data = callback_query.data
+        message = callback_query.message
+        user_id = str(callback_query.from_user.id)
+        
+        try:
+            parts = data.split(':', 3)
+            action = parts[1]  # overview, full_list, object
+            
+            if action == "object":
+                # Обработка выбора конкретного объекта по индексу
+                object_index = int(parts[2])
+                geo_place = parts[3]
+                await self.show_object_by_index(message, geo_place, object_index)
+                return
+                
+            geo_place = parts[2]
+            
+            await message.edit_reply_markup(reply_markup=None)
+            await callback_query.answer("Формирую обзор...")
+            
+            # Получаем список объектов
+            url = f"{API_URLS['objects_in_polygon']}?debug_mode=false"
+            payload = {"name": geo_place, "buffer_radius_km": 5}
+            
+            async with self.session.post(url, json=payload) as resp:
+                if not resp.ok:
+                    await message.answer("Ошибка при получении данных о локации")
+                    return
+                    
+                data = await resp.json()
+                objects_list = data.get("all_biological_names", [])
+                
+                if action == "overview":
+                    await self.show_overview(message, geo_place, objects_list)
+                elif action == "full_list":
+                    await self.show_full_list(message, geo_place, objects_list)
+                    
+        except Exception as e:
+            logger.error(f"Ошибка обработки exploration callback: {e}", exc_info=True)
+            await message.answer("Произошла ошибка при формировании обзора")
+
+    async def show_object_by_index(self, message: types.Message, geo_place: str, object_index: int):
+        """
+        Показывает информацию об объекте по его индексу в списке И ОБНОВЛЯЕТ КОНТЕКСТ
+        """
+        # Снова получаем список объектов
+        url = f"{API_URLS['objects_in_polygon']}?debug_mode=false"
+        payload = {"name": geo_place, "buffer_radius_km": 5}
+        
+        async with self.session.post(url, json=payload) as resp:
+            if not resp.ok:
+                await message.answer("Ошибка при получении данных")
+                return
+                
+            data = await resp.json()
+            objects_list = data.get("all_biological_names", [])
+            
+            if object_index >= len(objects_list):
+                await message.answer("Объект не найден")
+                return
+                
+            object_nom = objects_list[object_index]
+            
+            # === ВАЖНО: Сохраняем в контекст выбранный объект ===
+            user_id = str(message.chat.id)
+            context_entities = {"object": object_nom}
+            
+            # Определяем категорию объекта
+            object_category = await self.qa.get_object_category(object_nom)
+            
+            # Сохраняем в основной контекст
+            await self.dialogue_manager.update_history(
+                user_id, "get_text", context_entities, object_category
+            )
+            
+            logger.info(f"Обновили контекст для {user_id}: {context_entities}")
+            
+            # Используем существующий механизм уточнения
+            simulated_text = f"Расскажи про {object_nom}"
+            final_intent = "get_text"
+            final_entities = {"object": object_nom}
+
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=types.ChatActions.TYPING)
+            responses = await handle_intent(
+                self.session, final_intent, final_entities, 
+                user_id, simulated_text, False
+            )
+            
+            for resp_data in responses:
+                if resp_data.get("type") == "text":
+                    preface = f"🌿 **{object_nom}** (из {geo_place})\n\n"
+                    final_text = preface + resp_data["content"]
+                    await send_long_message(message, final_text, parse_mode="Markdown")
+                elif resp_data.get("type") == "image":
+                    await message.answer_photo(resp_data["content"])
+    
+    async def show_full_list(self, message: types.Message, geo_place: str, objects_list: list):
+        """
+        Показывает полный список объектов (как было изначально)
+        """
+        if not objects_list:
+            await message.answer(f"В районе '{geo_place}' не найдено объектов")
+            return
+        
+        # Формируем красивый список
+        objects_text = "• " + "\n• ".join(objects_list)
+        
+        text = f"📋 **Все объекты в районе {geo_place}**\n\n{objects_text}"
+        
+        # Предлагаем изучить конкретные объекты
+        keyboard = InlineKeyboardMarkup()
+        
+        # Берем первые 3 объекта для быстрого доступа
+        for i, obj in enumerate(objects_list[:3]):
+            keyboard.add(InlineKeyboardButton(
+                text=f"🌿 {obj}", 
+                callback_data=f"explore:object:{i}:{geo_place}"
+            ))
+        
+        keyboard.add(InlineKeyboardButton(
+            text="⬅️ Назад к обзору", 
+            callback_data=f"explore:overview:{geo_place}"
+        ))
+    
+        await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+    async def show_overview(self, message: types.Message, geo_place: str, objects_list: list):
+        """
+        Показывает умный обзор через LLM с объяснениями
+        """
+        try:
+            logger.info(f"Начинаем LLM анализ для {geo_place}, объектов: {len(objects_list)}")
+            
+            # Получаем анализ от LLM
+            analysis = await self.analyze_location_objects(geo_place, objects_list)
+            logger.info(f"LLM анализ успешен: {analysis}")
+            
+            text = f"🌿 **{geo_place}**\n\n"
+            text += f"{analysis['statistics']}\n\n"
+            
+            # Показываем интересные объекты С ОБЪЯСНЕНИЯМИ
+            if analysis.get('interesting_objects'):
+                text += "🎯 **Самые интересные:**\n"
+                for item in analysis['interesting_objects']:
+                    text += f"• **{item['name']}** - {item['reason']}\n"
+            
+            # Кнопки для изучения
+            keyboard = InlineKeyboardMarkup()
+            
+            if analysis.get('interesting_objects'):
+                for item in analysis['interesting_objects'][:3]:
+                    if item['name'] in objects_list:
+                        idx = objects_list.index(item['name'])
+                        keyboard.add(InlineKeyboardButton(
+                            text=f"🔍 {item['name']}", 
+                            callback_data=f"explore:object:{idx}:{geo_place}"
+                        ))
+            
+            keyboard.add(InlineKeyboardButton(
+                text="📋 Все объекты", 
+                callback_data=f"explore:full_list:{geo_place}"
+            ))
+            
+            await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа локации: {e}", exc_info=True)
+            # Fallback - простой список
+            logger.info("Используем fallback - простой список")
+            await self.show_simple_overview(message, geo_place, objects_list)
+    
+    async def analyze_location_objects(self, geo_place: str, objects_list: list) -> dict:
+        """
+        Анализирует список объектов локации через GigaChat
+        """
+        try:
+            # Используем метод из QueryAnalyzer который уже есть
+            return await self.qa.analyze_location_objects(geo_place, objects_list)
+            
+        except Exception as e:
+            logger.error(f"Ошибка анализа локации через LLM: {e}")
+            # Fallback - простая статистика
+            return {
+                "statistics": f"В локации {geo_place} найдено {len(objects_list)} биологических объектов.",
+                "interesting_objects": objects_list[:3]  # Первые 3 как интересные
+            }
+
+    async def show_simple_overview(self, message: types.Message, geo_place: str, objects_list: list):
+        """
+        Простой обзор без LLM (fallback)
+        """
+        text = f"🌿 **{geo_place}**\n\n"
+        text += f"Найдено объектов: {len(objects_list)}\n\n"
+        text += "• " + "\n• ".join(objects_list[:8])
+        
+        if len(objects_list) > 8:
+            text += f"\n\n... и еще {len(objects_list) - 8} объектов"
+        
+        keyboard = InlineKeyboardMarkup()
+        for i, obj in enumerate(objects_list[:3]):
+            keyboard.add(InlineKeyboardButton(
+                text=f"🔍 {obj}", 
+                callback_data=f"explore:object:{i}:{geo_place}"
+            ))
+        
+        keyboard.add(InlineKeyboardButton(
+            text="📋 Все объекты", 
+            callback_data=f"explore:full_list:{geo_place}"
+        ))
+        
+        await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")

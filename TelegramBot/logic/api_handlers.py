@@ -335,7 +335,7 @@ async def handle_nearest(session: aiohttp.ClientSession, result: dict, debug_mod
                 return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
             coords = await resp.json()
 
-        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom, "object_type": "biological_entity"}
+        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom, "object_type": "geographical_entity"}
         return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode, geo_nom)
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
@@ -352,32 +352,61 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, result: dict, d
 
 async def handle_objects_in_polygon(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
     geo_nom = result.get("geo_place")
+    
+    # Существующий запрос к API
     url = f"{API_URLS['objects_in_polygon']}?debug_mode={str(debug_mode).lower()}"
     payload = {"name": geo_nom, "buffer_radius_km": 5}
     
-    try:
-        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            if not resp.ok:
-                return [{"type": "text", "content": f"Не удалось найти полигон для '{geo_nom}'."}]
-            data = await resp.json()
+    async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+        if not resp.ok:
+            return [{"type": "text", "content": f"Не удалось найти полигон для '{geo_nom}'."}]
+        
+        data = await resp.json()
+        objects_list = data.get("all_biological_names", [])
+        
+        messages = []
+        
+        # 1. Показываем карту (как сейчас)
+        if data.get("interactive_map") and data.get("static_map"):
+            caption = f"📍 Объекты в районе: {geo_nom}"
+            if objects_list:
+                caption += f"\n\nНайдено объектов: {len(objects_list)}"
             
-            messages = []
-            names = data.get("all_biological_names", [])
-            if names:
-                unique_names = sorted(list(set(name.capitalize() for name in names)))
-                flora_list = f"🌿 В районе '{geo_nom}' найдены следующие объекты:\n" + "• " + "\n• ".join(unique_names)
-                messages.append({"type": "text", "content": flora_list})
-            else:
-                messages.append({"type": "text", "content": f"В районе '{geo_nom}' не найдено известных мне объектов."})
+            messages.append({
+                "type": "map", 
+                "static": data["static_map"], 
+                "interactive": data["interactive_map"], 
+                "caption": caption
+            })
+        
+        # 2. Если много объектов - предлагаем УМНЫЙ обзор через LLM
+        if len(objects_list) > 3:
+            # НОВОЕ: вместо create_exploration_offer сразу показываем умный обзор
+            overview_msg = await create_llm_overview(geo_nom, objects_list)
+            messages.append(overview_msg)
+        # 3. Если мало - показываем простой список
+        elif objects_list:
+            simple_list = f"🌿 В районе **{geo_nom}** найдены:\n• " + "\n• ".join(objects_list)
+            messages.append({"type": "text", "content": simple_list})
+        else:
+            messages.append({"type": "text", "content": f"В районе '{geo_nom}' не найдено известных объектов."})
+        
+        return messages
 
-            if data.get("interactive_map") and data.get("static_map"):
-                messages.append({"type": "map", "static": data["static_map"], "interactive": data["interactive_map"], "caption": f"Объекты в районе: {geo_nom}"})
-            
-            return messages
-    except Exception as e:
-        logger.error(f"Ошибка в handle_objects_in_polygon: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов."}]
-
+async def create_llm_overview(geo_place: str, objects_list: list) -> dict:
+    """
+    Создает предложение увидеть умный обзор (БЕЗ вызова LLM здесь)
+    """
+    buttons = [
+        [{"text": "🎯 Умный обзор", "callback_data": f"explore:overview:{geo_place}"}],
+        [{"text": "📋 Все объекты", "callback_data": f"explore:full_list:{geo_place}"}]
+    ]
+    
+    return {
+        "type": "clarification",
+        "content": f"🗺️ **{geo_place}**\n\nНашел {len(objects_list)} объектов. Хотите увидеть умный обзор с анализом или просто список?",
+        "buttons": buttons
+    }
 
 # --- Главный маршрутизатор ---
 

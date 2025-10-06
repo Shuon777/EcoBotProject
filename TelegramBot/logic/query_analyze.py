@@ -154,7 +154,7 @@ class QueryAnalyzer:
 
 ## ОПИСАНИЕ ПОЛЕЙ JSON:
 - `object`: Название биологического объекта (животное, растение). Приводи его к именительному падежу. Например, "нерпой" -> "нерпа". Если объект не упомянут, верни `null`.
-- `geo_place`: Название географического места (город, остров, мыс, река). Если не упомянуто, верни `null`. geo_place - конкретный топоним (например Култук, Малое море...), он не может быть абстрактным (например, болото, лес, луг).
+- `geo_place`: Название географического места (город, остров, мыс, река). Если не упомянуто, верни `null`. geo_place - конкретный топоним (например Култук, Малое море...), он не может быть абстрактным (например, болото, лес, луг). Приводи его к именительному падежу. Например, "малом море" -> "Малое море"
 - `features`: JSON-объект с дополнительными признаками объекта. Если признаков нет, верни пустой объект `{{}}`. Возможные ключи и значения:
     - `season`: "Зима", "Весна", "Лето", "Осень".
     - `habitat`: "Лес", "Поле", "Горы", "Побережье", "На дереве", "В воде", "На болоте", "На лугу".
@@ -355,6 +355,55 @@ class QueryAnalyzer:
         except Exception as e:
             logger.error(f"Ошибка при определении категории для '{object_name}': {e}")
             return None
+        
+    async def analyze_location_objects(self, geo_place: str, objects_list: list) -> dict:
+        """
+        Анализирует список объектов локации через GigaChat
+        """
+        try:
+            prompt = f"""
+            Проанализируй эти биологические объекты из локации "{geo_place}":
+            {', '.join(objects_list)}
+            
+            Верни ответ в JSON формате:
+            {{
+                "statistics": "краткая статистика 2-3 предложения",
+                "interesting_objects": [
+                    {{
+                        "name": "название объекта1",
+                        "reason": "короткое объяснение почему интересен (1 предложение)"
+                    }}
+                ]
+            }}
+            
+            Выбери 3 самых уникальных/интересных объекта и кратко объясни их значимость.
+            """
+            
+            logger.info(f"Отправляем запрос к LLM для {geo_place}")
+            response = await self.llm.ainvoke(prompt)
+            logger.info(f"Получен ответ от LLM: {response.content}")
+            
+            # Пробуем извлечь JSON
+            json_text = response.content.strip()
+            start_index = json_text.find('{')
+            end_index = json_text.rfind('}')
+            
+            if start_index != -1 and end_index != -1:
+                json_text = json_text[start_index:end_index+1]
+                result = json.loads(json_text)
+                logger.info(f"JSON успешно распарсен: {result}")
+                return result
+            else:
+                logger.error(f"JSON не найден в ответе: {response.content}")
+                raise ValueError("JSON не найден в ответе LLM")
+                
+        except Exception as e:
+            logger.error(f"Ошибка анализа локации через LLM: {e}", exc_info=True)
+            # Fallback - простая статистика
+            return {
+                "statistics": f"В локации {geo_place} найдено {len(objects_list)} биологических объектов.",
+                "interesting_objects": [{"name": obj, "reason": "интересный объект"} for obj in objects_list[:3]]
+            }
 
 
   
