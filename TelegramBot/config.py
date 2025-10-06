@@ -38,6 +38,7 @@ API_URLS = {
     "is_known_object": f"{ECOBOT_API_BASE_URL}/api/is_known_object",
     "get_species_area": f"{ECOBOT_API_BASE_URL}/api/get_species_area",
     "draw_multiple_places": f"{ECOBOT_API_BASE_URL}/api/draw_multiple_places",
+    "find_species_with_description": f"{ECOBOT_API_BASE_URL}/api/find_species_with_description",
 }
 
 # --- Таймауты ---

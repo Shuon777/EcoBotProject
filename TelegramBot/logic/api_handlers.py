@@ -1,4 +1,4 @@
-# --- НАЧАЛО ПОЛНОГО ФАЙЛА: logic/api_handlers.py ---
+# --- НАЧАЛО ФАЙЛА: logic/api_handlers.py ---
 
 import aiohttp
 import asyncio
@@ -6,7 +6,6 @@ import logging
 import json
 from typing import Dict, Any, List
 
-# Исправляем импорты для новой структуры
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
 
@@ -87,40 +86,69 @@ async def handle_get_picture(session: aiohttp.ClientSession, result: dict, debug
     logger.info(f"--- Завершение handle_get_picture. Отправляется {len(messages)} сообщений. ---")
     return messages
 
-async def handle_get_description(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+async def handle_get_description(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool, offset: int = 0) -> list:
     object_nom = result.get("object")
-    url = f"{API_URLS['get_description']}?species_name={object_nom}&debug_mode={str(debug_mode).lower()}"
+    
+    find_url = f"{API_URLS['find_species_with_description']}"
+    payload = {"name": object_nom, "limit": 4, "offset": offset}
 
     try:
-        async with session.get(url, timeout=DEFAULT_TIMEOUT) as resp:
-            if not resp.ok:
-                return [{"type": "text", "content": f"Извините, не удалось получить описание для '{object_nom}'."}]
-            data = await resp.json()
+        async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
+            if not find_resp.ok:
+                return [{"type": "text", "content": f"Извините, произошла ошибка при поиске '{object_nom}'."}]
             
+            data = await find_resp.json()
             status = data.get("status")
+
             if status == "ambiguous":
                 matches = data.get("matches", [])
-                buttons = [[{"text": match, "callback_data": f"clarify_object:{match}"}] for match in matches[:5]]
+                buttons = [[{"text": match, "callback_data": f"clarify_object:{match}"}] for match in matches]
+                system_buttons_row = []
+                if matches:
+                    system_buttons_row.append({"text": "Любую 🎲", "callback_data": f"clarify_object:{matches[0]}"})
+
+                has_more = data.get("has_more", False)
+                if has_more:
+                    new_offset = offset + len(matches)
+                    callback_str = f"clarify_more:{object_nom}:{new_offset}"
+                    system_buttons_row.append({"text": "Поискать еще 🔍", "callback_data": callback_str})
+
+                if system_buttons_row:
+                    buttons.append(system_buttons_row)
+
                 return [{
-                    "type": "buttons",
+                    "type": "clarification",
                     "content": f"Я знаю несколько видов для '{object_nom}'. Уточните, какой именно вас интересует?",
                     "buttons": buttons
                 }]
 
-            descriptions = data.get("descriptions", [])
-            text = ""
-            if descriptions:
-                first_item = descriptions[0]
-                if isinstance(first_item, dict): text = first_item.get("content", "")
-                elif isinstance(first_item, str): text = first_item
+            elif status == "found":
+                canonical_name = data.get("matches", [object_nom])[0]
+                logger.info(f"Найдено точное совпадение: '{canonical_name}'. Запрашиваю описание...")
 
-            if not text:
-                if get_user_fallback_setting(user_id):
-                    fallback_answer = await call_gigachat_fallback_service(session, original_query)
-                    if fallback_answer: return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
-                return [{"type": "text", "content": f"Извините, описание для '{object_nom}' не найдено."}]
+                desc_url = f"{API_URLS['get_description']}?species_name={canonical_name}&debug_mode={str(debug_mode).lower()}"
+                async with session.get(desc_url, timeout=DEFAULT_TIMEOUT) as desc_resp:
+                    if not desc_resp.ok:
+                         return [{"type": "text", "content": f"Нашел объект '{canonical_name}', но не смог загрузить его описание."}]
+                    
+                    desc_data = await desc_resp.json()
+                    descriptions = desc_data.get("descriptions", [])
+                    text = ""
+                    if descriptions:
+                        first_item = descriptions[0]
+                        if isinstance(first_item, dict): text = first_item.get("content", "")
+                        elif isinstance(first_item, str): text = first_item
+                    
+                    if text:
+                        return [{"type": "text", "content": text, "canonical_name": canonical_name}]
+            
+            logger.warning(f"Описание для '{object_nom}' не найдено ни на одном из этапов.")
+            if get_user_fallback_setting(user_id):
+                fallback_answer = await call_gigachat_fallback_service(session, original_query)
+                if fallback_answer: return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
+            
+            return [{"type": "text", "content": f"Извините, описание для '{object_nom}' не найдено."}]
 
-            return [{"type": "text", "content": text}]
     except Exception as e:
         logger.error(f"Ошибка в handle_get_description: {e}", exc_info=True)
         return [{"type": "text", "content": "Проблема с подключением к серверу описаний."}]
@@ -232,6 +260,8 @@ async def handle_intent(session: aiohttp.ClientSession, intent: str, result: dic
     
     if intent == "get_text":
         handler_kwargs.update({"user_id": user_id, "original_query": original_query})
+        if "offset" in result:
+            handler_kwargs["offset"] = result["offset"]
 
     handlers = {
         "get_picture": handle_get_picture,

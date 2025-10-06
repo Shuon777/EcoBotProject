@@ -1,3 +1,5 @@
+# --- НАЧАЛО ФАЙЛА: logic/dialogue_manager.py ---
+
 import logging
 from typing import Dict, Any, Optional, Tuple
 
@@ -11,13 +13,9 @@ class DialogueManager:
     def __init__(self, context_manager: RedisContextManager):
         self.context_manager = context_manager
 
-    
     async def enrich_request(
         self, user_id: str, query: str, intent: str, entities: Dict[str, Any]
     ) -> Tuple[str, Dict[str, Any]]:
-        """
-        Обогащает неполный запрос, используя контекст из Redis.
-        """
         if not self.context_manager.redis_client:
             return intent, entities
 
@@ -30,19 +28,14 @@ class DialogueManager:
         last_intent = last_item.get("intent")
         last_entities = last_item.get("entities", {})
         
-        # [ИЗМЕНЕНО] Улучшенная логика обогащения интента
         is_ambiguous_query = len(query.split()) <= 3 and not any(verb in query.lower() for verb in ACTION_VERBS)
 
-        # Если запрос неявный (например, "а эдельвейс?") И в истории есть интент,
-        # то мы ПРИНУДИТЕЛЬНО используем интент из истории, игнорируя догадку LLM.
         if is_ambiguous_query and last_intent:
             logger.info(f"Неявный запрос. Заменяем интент '{final_intent}' на интент из истории: '{last_intent}'")
             final_intent = last_intent
-        # В качестве запасного варианта, если LLM сам не уверен
         elif final_intent == "unknown" and last_intent:
             final_intent = last_intent
             
-        # Обогащение сущностей остается прежним, оно работает корректно
         if not final_entities.get("object") and last_entities.get("object"):
             final_entities["object"] = last_entities.get("object")
 
@@ -57,24 +50,44 @@ class DialogueManager:
 
         return final_intent, final_entities
 
-    async def update_and_check_comparison(
-        self, user_id: str, final_intent: str, final_entities: Dict[str, Any], object_category: Optional[str]
+    async def get_comparison_pair(
+        self, user_id: str, current_intent: str, current_entities: Dict[str, Any], current_category: Optional[str]
     ) -> Optional[Dict[str, str]]:
         """
-        Обновляет историю диалога в Redis и проверяет, можно ли предложить сравнение.
-        Эта функция вызывается для ВСЕХ осмысленных запросов.
+        Только читает историю и проверяет, можно ли предложить сравнение.
         """
         if not self.context_manager.redis_client:
             return None
-            
+
         user_context = await self.context_manager.get_context(user_id)
         history = user_context.get("history", [])
         last_item = history[0] if history else {}
 
-        comparison_pair = self._check_for_comparison(final_intent, final_entities, object_category, last_item)
+        current_object = current_entities.get("object")
+        last_object = last_item.get("object")
+        last_category = last_item.get("category")
 
-        # Обновляем историю, только если запрос содержит ключевые сущности
+        if (current_intent in ["get_text", "get_picture"] and
+                current_object and current_category and
+                last_object and last_category == current_category and
+                last_object != current_object):
+            return {"object1": last_object, "object2": current_object}
+        
+        return None
+
+    async def update_history(
+        self, user_id: str, final_intent: str, final_entities: Dict[str, Any], object_category: Optional[str]
+    ):
+        """
+        Только пишет в историю. Вызывается после успешного ответа.
+        """
+        if not self.context_manager.redis_client:
+            return
+
         if final_entities.get("object") or final_entities.get("geo_place"):
+            user_context = await self.context_manager.get_context(user_id)
+            history = user_context.get("history", [])
+            
             new_history_item = {
                 "intent": final_intent,
                 "entities": final_entities,
@@ -82,24 +95,9 @@ class DialogueManager:
                 "category": object_category
             }
             updated_history = [new_history_item] + history[:1]
-            await self.context_manager.set_context(user_id, {"history": updated_history})
-        
-        return comparison_pair
-
-    def _check_for_comparison(
-        self, final_intent: str, final_entities: Dict[str, Any],
-        object_category: Optional[str], last_item: Dict[str, Any]
-    ) -> Optional[Dict[str, str]]:
-        """(Синхронная функция) Проверяет, можно ли предложить сравнение."""
-        current_object_name = final_entities.get("object")
-        last_object_name = last_item.get("object")
-        last_object_category = last_item.get("category")
-
-        if (final_intent == "get_text" and
-                current_object_name and object_category and
-                last_object_name and last_object_category == object_category and
-                last_object_name != current_object_name):
-            return {"object1": last_object_name, "object2": current_object_name}
-        return None
+            
+            user_context['history'] = updated_history
+            await self.context_manager.set_context(user_id, user_context)
+            logger.info(f"История для user_id={user_id} обновлена: {new_history_item}")
 
 # --- КОНЕЦ ФАЙЛА: logic/dialogue_manager.py ---
