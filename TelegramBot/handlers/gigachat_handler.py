@@ -21,14 +21,34 @@ REQUIRED_ENTITIES = {
     "get_location": ["object"],
     "get_objects_in_polygon": ["geo_place"],
     "get_intersection_object_on_map": ["object", "geo_place"],
+    
+    "get_geo_objects": [],
+    "get_geo_info": [],
+    "get_geo_count": []
 }
 
 ACTION_VERBS = ["расскажи", "покажи", "опиши", "выглядит", "где", "найти", "растет", "обитает", "встретить"]
 
 def is_request_complete(intent: str, entities: Dict[str, Any]) -> bool:
-    if intent not in REQUIRED_ENTITIES:
-        return False
-    return all(entities.get(entity) for entity in REQUIRED_ENTITIES[intent])
+    # Для СТАРЫХ намерений - существующая логика
+    if intent in REQUIRED_ENTITIES:
+        return all(entities.get(entity) for entity in REQUIRED_ENTITIES[intent])
+    
+    # Для НОВЫХ географических намерений
+    if intent in ["get_geo_objects", "get_geo_info", "get_geo_count"]:
+        location_info = entities.get("location_info", {})
+        geo_type = entities.get("geo_type", {})
+        
+        # Запрос считается ПОЛНЫМ если есть:
+        # - Локация И тип объектов, ИЛИ
+        # - Конкретный объект (sub_type)
+        has_location = bool(location_info.get("exact_location") or location_info.get("region"))
+        has_object_types = bool(geo_type.get("specific_types"))
+        has_sub_type = bool(geo_type.get("sub_type"))
+        
+        return (has_location and has_object_types) or has_sub_type
+    
+    return False
 
 
 class GigaChatHandler:

@@ -1,4 +1,4 @@
-# --- НАЧАЛО ФАЙЛА: TelegramBot/query_analyze.py ---
+# --- НАЧАЛО ФАЙЛА: logic/query_analyze.py ---
 
 import os
 import json
@@ -7,7 +7,9 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage
+
+# Импортируем промпты из отдельного файла
+from logic.prompts import GeoPrompts, StandardPrompts
 
 # Настройка логирования
 logging.basicConfig(
@@ -45,261 +47,126 @@ class QueryAnalyzer:
         except Exception as e:
             logger.error(f"Ошибка создания GigaChat инстанса: {str(e)}")
             raise
-    
-    def _get_category_detection_prompt(self) -> ChatPromptTemplate:
-        """Создает промпт для быстрой классификации объекта."""
-        category_system_prompt = """
-    Твоя задача — определить общую биологическую категорию для указанного объекта.
-    Ответь ТОЛЬКО ОДНИМ СЛОВОМ из предложенного списка. Никаких пояснений.
 
-    ## ВОЗМОЖНЫЕ КАТЕГОРИИ:
-    - Дерево
-    - Кустарник
-    - Трава
-    - Млекопитающее
-    - Птица
-    - Рыба
-    - Насекомое
-    - Другое
-
-    ## ПРИМЕРЫ:
-    - Ввод: "лиственница сибирская" -> Вывод: Дерево
-    - Ввод: "байкальская нерпа" -> Вывод: Млекопитающее
-    - Ввод: "омуль" -> Вывод: Рыба
-    - Ввод: "эдельвейс" -> Вывод: Трава
-    - Ввод: "можжевельник" -> Вывод: Кустарник
-    - Ввод: "остров Ольхон" -> Вывод: Другое
-    """
-        return ChatPromptTemplate.from_messages([
-            ("system", category_system_prompt),
-            ("human", "{object_name}")
-        ])
-
-    def _get_intent_detection_prompt(self) -> ChatPromptTemplate:
-        """Создает промпт для определения намерения."""
-        intent_system_prompt = """
-Твоя задача — определить **главную цель** пользователя по его запросу и сопоставить её с одним из намерений.
-
-## ВОЗМОЖНЫЕ НАМЕРЕНИЯ:
-- `get_picture`: пользователь хочет **увидеть, как выглядит** объект.
-- `get_location`: пользователь хочет **узнать ареал обитания** объекта, где он встречается в целом.
-- `get_intersection_object_on_map`: ищет объект **рядом с конкретным местом**.
-- `get_text`: хочет получить **текстовое описание, факт, справку**.
-- `get_objects_in_polygon`: хочет узнать, **что находится в конкретной локации**.
-- `unknown`: намерение неясно, это короткое уточнение или нецелевой запрос.
-
-## ПРАВИЛА ОПРЕДЕЛЕНИЯ:
-1.  **Анализируй суть, а не слова:** Не полагайся только на отдельные глаголы вроде "покажи" или "где". Анализируй всю фразу, чтобы понять, что **именно** пользователь хочет узнать.
-2.  **Определи основной вопрос:** Подумай, на какой из этих вопросов отвечает запрос пользователя:
-    - "Как он выглядит?" -> `get_picture`
-    - "Где он встречается в целом?" -> `get_location`
-    - "Расскажи мне о нём" -> `get_text`
-3.  **Короткие уточнения -> `unknown`:** Если запрос короткий (1-3 слова) и не содержит явного вопроса или действия, он зависит от контекста. В этом случае смело отвечай `unknown`.
-
-Проанализируй запрос и ответь ТОЛЬКО ОДНИМ СЛОВОМ — названием намерения.
-
-## ПРИМЕРЫ:
-
-### Явные запросы
-- Ввод: "расскажи про иву" -> Вывод: get_text
-- Ввод: "какие животные есть на Ольхоне" -> Вывод: get_objects_in_polygon
-- Ввод: "Покажи лиственницу сибирскую на болоте" -> Вывод: get_picture
-
-### Запросы с неоднозначными глаголами (здесь важен объект действия)
-- Ввод: "Покажи эдельвейс" -> Вывод: get_picture
-- Ввод: "Покажи ареал эдельвейса" -> Вывод: get_location
-- Ввод: "где найти кедр" -> Вывод: get_location
-- Ввод: "где найти кедр рядом с Култуком" -> Вывод: get_intersection_object_on_map
-
-### Неявные запросы (твой ответ должен быть 'unknown')
-- Ввод: "А эдельвейс?" -> Вывод: unknown
-- Ввод: "А зимой?" -> Вывод: unknown
-- Ввод: "даурский еж" -> Вывод: unknown
-"""
-        return ChatPromptTemplate.from_messages([
-            ("system", intent_system_prompt),
-            ("human", "{query}")
-        ])
-
-    async def detect_intent(self, query: str) -> str:
-        """
-        Определяет намерение пользователя, возвращая строку (например, "get_picture").
-        """
-        logger.info(f"Определение намерения для запроса: '{query}'")
+    async def _detect_geo_intent(self, query: str) -> str:
+        """Определяет тип географического запроса"""
         try:
-            prompt = self._get_intent_detection_prompt()
+            prompt = GeoPrompts.geo_check_prompt()
+            chain = prompt | self.llm
+            response = await chain.ainvoke({"query": query})
+            
+            geo_type = response.content.strip().lower()
+            valid_types = ["geo_list", "geo_info", "geo_count", "not_geo"]
+            
+            if geo_type in valid_types:
+                logger.info(f"Тип географического запроса: {geo_type}")
+                return geo_type
+            else:
+                logger.warning(f"Неизвестный тип географического запроса: {geo_type}")
+                return "not_geo"
+                
+        except Exception as e:
+            logger.error(f"Ошибка при определении типа географического запроса: {e}")
+            return "not_geo"
+
+    async def _detect_standard_intent(self, query: str) -> str:
+        """Определяет намерение для не-географических запросов"""
+        try:
+            prompt = StandardPrompts.intent_detection_prompt()
             chain = prompt | self.llm
             response = await chain.ainvoke({"query": query})
             
             intent = response.content.strip().lower()
             
-            allowed_intents = ["get_picture", "get_location", "get_intersection_object_on_map", "get_text", "get_objects_in_polygon"]
+            allowed_intents = ["get_picture", "get_location", "get_intersection_object_on_map", 
+                              "get_text", "get_objects_in_polygon", "unknown"]
             if intent in allowed_intents:
-                logger.info(f"Намерение определено как: '{intent}'")
+                logger.info(f"Стандартное намерение определено как: '{intent}'")
                 return intent
             else:
                 logger.warning(f"GigaChat вернул невалидное намерение: '{intent}'. Установлено 'unknown'.")
                 return "unknown"
         except Exception as e:
+            logger.error(f"Ошибка при определении стандартного намерения: {e}", exc_info=True)
+            return "unknown"
+
+    async def detect_intent(self, query: str) -> str:
+        """
+        Определяет намерение пользователя, возвращая строку.
+        """
+        logger.info(f"Определение намерения для запроса: '{query}'")
+        
+        try:
+            # ШАГ 1: Сначала проверяем тип географического запроса
+            geo_type = await self._detect_geo_intent(query)
+            
+            if geo_type != "not_geo":
+                # Маппим типы географических запросов на намерения
+                geo_intent_map = {
+                    "geo_list": "get_geo_objects",
+                    "geo_info": "get_geo_info", 
+                    "geo_count": "get_geo_count"
+                }
+                intent = geo_intent_map.get(geo_type, "get_geo_objects")
+                logger.info(f"Запрос '{query}' -> географическое намерение: {intent}")
+                return intent
+            
+            # ШАГ 2: Если не географический - используем обычную логику
+            return await self._detect_standard_intent(query)
+            
+        except Exception as e:
             logger.error(f"Ошибка при определении намерения: {e}", exc_info=True)
             return "unknown"
 
-    def _get_entity_extraction_prompt(self, intent: str) -> ChatPromptTemplate:
-        """Создает детальный промпт для извлечения сущностей на основе известного намерения."""
-        # --- БАЗОВАЯ ЧАСТЬ ПРОМПТА ---
-        base_prompt = """## РОЛЕВАЯ МОДЕЛЬ:
-Ты — высокоточный и внимательный парсер-аналитик запросов о флоре и фауне Байкала.
-Твоя задача — проанализировать запрос пользователя с уже известным намерением и извлечь из него СТРОГО ОПРЕДЕЛЕННЫЙ набор сущностей.
-Результат необходимо вернуть в формате JSON без каких-либо пояснений.
-
-## ОПИСАНИЕ ПОЛЕЙ JSON:
-- `object`: Название биологического объекта (животное, растение). Приводи его к именительному падежу. Например, "нерпой" -> "нерпа". Если объект не упомянут, верни `null`.
-- `geo_place`: Название географического места (город, остров, мыс, река). Если не упомянуто, верни `null`. geo_place - конкретный топоним (например Култук, Малое море...), он не может быть абстрактным (например, болото, лес, луг). Приводи его к именительному падежу. Например, "малом море" -> "Малое море"
-- `features`: JSON-объект с дополнительными признаками объекта. Если признаков нет, верни пустой объект `{{}}`. Возможные ключи и значения:
-    - `season`: "Зима", "Весна", "Лето", "Осень".
-    - `habitat`: "Лес", "Поле", "Горы", "Побережье", "На дереве", "В воде", "На болоте", "На лугу".
-    - `flowering`: `true`, если в запросе есть слова "цветение", "цветущий", "в цвету" и т.п.
-    - `fruits_present`: "Шишка", "Ягода", "Плод", "Орех", "Желудь", если в запросе упоминаются плоды.
-- `unsupported_features`: Список строк с признаками, которые ты не можешь классифицировать по словарю `features`. Это редкие, небиологические описания. Например: "на фоне заката", "рядом с машиной", "в смешной шапке". Если таких нет, верни пустой список `[]`.
-- `can_fulfill`: Булево значение. Установи `false` ТОЛЬКО ЕСЛИ список `unsupported_features` НЕ ПУСТОЙ. Во всех остальных случаях — `true`.
-
-## ИНСТРУКЦИИ ПО ИЗВЛЕЧЕНИЮ (ВАЖНО!)
-В зависимости от намерения (`intent`), тебе нужно сфокусироваться на извлечении только определенных полей. Остальные поля должны иметь значения по умолчанию (`null`, `{{}}`, `[]`).
-**[ВАЖНО] Если `intent` равен `unknown`:** Это значит, что запрос — контекстное уточнение. Твоя задача — просто извлечь ВСЕ сущности, которые ты видишь в тексте, ничего не додумывая.
-"""
-
-        # --- ДИНАМИЧЕСКАЯ ЧАСТЬ ПРОМПТА В ЗАВИСИМОСТИ ОТ НАМЕРЕНИЯ ---
-        intent_specific_instructions = ""
-        if intent == "get_picture":
-            intent_specific_instructions = """- **Задача для `get_picture`:** Извлеки `object` и любые `features`. Поля `geo_place` и `unsupported_features` вторичны.
-- **Пример:** "Покажи фото цветущей черёмухи весной в лесу" -> извлекаются `object`, `features.flowering`, `features.season`, `features.habitat`."""
+    async def _extract_geo_entities(self, query: str) -> Dict[str, Any]:
+        """Извлекает сущности ТОЛЬКО для географических запросов по НОВОЙ структуре"""
+        logger.info(f"Извлечение ГЕОГРАФИЧЕСКИХ сущностей из запроса: '{query}'")
         
-        elif intent == "get_location":
-            intent_specific_instructions = """- **Задача для `get_location`:** Извлеки только `object`.
-- **Пример:** "Где растёт багульник?" -> извлекается только `object`."""
-            
-        elif intent == "get_intersection_object_on_map":
-            intent_specific_instructions = """- **Задача для `get_intersection_object_on_map`:** Извлеки `object` и `geo_place`. Это самые важные поля.
-- **Пример:** "Где найти сибирский кедр рядом с посёлком Култук?" -> извлекаются `object` и `geo_place`."""
-            
-        elif intent == "get_objects_in_polygon":
-            intent_specific_instructions = """- **Задача для `get_objects_in_polygon`:** Извлеки только `geo_place`.
-- **Пример:** "Какая флора растет на острове Ольхон?" -> извлекается только `geo_place`."""
-            
-        elif intent == "get_text":
-            intent_specific_instructions = """- **Задача для `get_text`:** Извлеки только `object`.
-- **Пример:** "Расскажи мне о байкальской нерпе" -> извлекается только `object`."""
-
-        # --- ПРИМЕРЫ ДЛЯ ОБУЧЕНИЯ МОДЕЛИ ---
-        examples = """
-## ПРИМЕРЫ:
-
-**Запрос:** "Как выглядит эдельвейс?"
-**Намерение:** `get_picture`
-**Результат:**```json
-{{
-  "object": "эдельвейс",
-  "geo_place": null,
-  "features": {{}},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-**Запрос:** "Покажи лиственницу сибирскую на болоте"
-**Намерение:** `get_picture`
-**Результат:**
-{{
-  "object": "лиственница сибирская",
-  "geo_place": null,
-  "features": {{
-    "habitat": "Болото"
-  }},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-Запрос: "Покажи мне фото белки с шишкой зимой в лесу"
-Намерение: get_picture
-Результат:
-{{
-  "object": "белка",
-  "geo_place": null,
-  "features": {{
-    "fruits_present": "Шишка",
-    "season": "Зима",
-    "habitat": "Лес"
-  }},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-
-Запрос: "Где можно встретить Ольхонскую полевку рядом с Култуком"
-Намерение: get_intersection_object_on_map
-Результат:
-{{
-  "object": "Ольхонская полевка",
-  "geo_place": "Култук",
-  "features": {{}},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-
-Запрос: "Какую флору я могу встретить на Малом море"
-Намерение: get_objects_in_polygon
-Результат: 
-{{
-  "object": null,
-  "geo_place": "Малое море",
-  "features": {{}},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-
-Запрос: "Покажи чайку на фоне колеса обозрения"
-Намерение: get_picture
-Результат:  
-{{
-  "object": "чайка",
-  "geo_place": null,
-  "features": {{}},
-  "unsupported_features": ["на фоне колеса обозрения"],
-  "can_fulfill": false
-}}
-Запрос: "А эдельвейс?"
-Намерение: unknown
-Результат:  
-{{
-  "object": "эдельвейс",
-  "geo_place": null,
-  "features": {{}},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-Запрос: "А зимой?"
-Намерение: unknown
-Результат:
-{{
-  "object": null,
-  "geo_place": null,
-  "features": {{
-    "season": "Зима"
-  }},
-  "unsupported_features": [],
-  "can_fulfill": true
-}}
-  
-"""
-        # Собираем финальный промпт
-        final_prompt = f"{base_prompt}\n{intent_specific_instructions}\n{examples}"
-
-        return ChatPromptTemplate.from_messages([
-                ("system", final_prompt),
-                ("human", "Проанализируй следующий запрос с уже известным намерением.\nНамерение: `{intent}`\nЗапрос: `{query}`")
-            ])
-
-    async def extract_entities(self, query: str, intent: str) -> Dict[str, Any]:
-        """Анализирует текст запроса для известного намерения и возвращает JSON с сущностями."""
-        logger.info(f"Извлечение сущностей для намерения '{intent}' из запроса: '{query}'")
         try:
-            prompt = self._get_entity_extraction_prompt(intent)
+            prompt = GeoPrompts.geo_entity_extraction_prompt()
+            chain = prompt | self.llm
+            response = await chain.ainvoke({"query": query})
+
+            generated_text = response.content.strip()
+            
+            # Извлечение JSON
+            start_index = generated_text.find('{')
+            end_index = generated_text.rfind('}')
+            if start_index != -1 and end_index != -1:
+                json_text = generated_text[start_index:end_index+1]
+            else:
+                raise json.JSONDecodeError("JSON объект не найден в ответе LLM", generated_text, 0)
+            
+            parsed_json = json.loads(json_text)
+            
+            # НОРМАЛИЗАЦИЯ и ВАЛИДАЦИЯ новой структуры
+            if "location_info" not in parsed_json:
+                parsed_json = {"location_info": {}, "geo_type": {}}
+                
+            # Гарантируем наличие всех полей
+            location_info = parsed_json.setdefault("location_info", {})
+            location_info.setdefault("exact_location", None)
+            location_info.setdefault("region", None)
+            location_info.setdefault("nearby_places", [])
+            
+            geo_type = parsed_json.setdefault("geo_type", {})
+            geo_type.setdefault("primary_type", [])
+            geo_type.setdefault("specific_types", [])
+
+            logger.info(f"Географические сущности извлечены: {json.dumps(parsed_json, ensure_ascii=False)}")
+            return {"success": True, "result": parsed_json}
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка парсинга JSON для географических сущностей: {str(e)}", exc_info=True)
+            return {"success": False, "error": f"Невалидный JSON: {str(e)}", "raw_text": generated_text}
+        except Exception as e:
+            logger.error(f"Непредвиденная ошибка при извлечении географических сущностей: {str(e)}", exc_info=True)
+            return {"success": False, "error": f"Внутренняя ошибка: {str(e)}"}
+
+    async def _extract_standard_entities(self, query: str, intent: str) -> Dict[str, Any]:
+        """Существующая логика извлечения сущностей (без изменений)"""
+        try:
+            prompt = StandardPrompts.entity_extraction_prompt(intent)
             chain = prompt | self.llm
             response = await chain.ainvoke({"query": query, "intent": intent})
 
@@ -322,15 +189,29 @@ class QueryAnalyzer:
             parsed_json.setdefault("unsupported_features", [])
             parsed_json.setdefault("can_fulfill", len(parsed_json.get("unsupported_features", [])) == 0)
 
-            logger.info(f"Сущности извлечены успешно: {json.dumps(parsed_json, ensure_ascii=False)}")
+            logger.info(f"Стандартные сущности извлечены успешно: {json.dumps(parsed_json, ensure_ascii=False)}")
             return {"success": True, "result": parsed_json}
         
         except json.JSONDecodeError as e:
             logger.error(f"Ошибка парсинга JSON: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Невалидный JSON: {str(e)}", "raw_text": generated_text}
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при извлечении сущностей: {str(e)}", exc_info=True)
+            logger.error(f"Непредвиденная ошибка при извлечении стандартных сущностей: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Внутренняя ошибка при анализе запроса: {str(e)}"}
+
+    async def extract_entities(self, query: str, intent: str) -> Dict[str, Any]:
+        """Главный метод извлечения сущностей с РАЗДЕЛЕНИЕМ логики"""
+        logger.info(f"Извлечение сущностей для намерения '{intent}' из запроса: '{query}'")
+        
+        # Определяем тип запроса по намерению
+        geo_intents = ["get_geo_objects", "get_geo_info", "get_geo_count"]
+        
+        if intent in geo_intents:
+            # НОВАЯ логика для географических запросов
+            return await self._extract_geo_entities(query)
+        else:
+            # СТАРАЯ логика для всех остальных запросов
+            return await self._extract_standard_entities(query, intent)
         
     async def get_object_category(self, object_name: str) -> Optional[str]:
         """
@@ -339,7 +220,7 @@ class QueryAnalyzer:
         """
         logger.info(f"Определение категории для объекта: '{object_name}'")
         try:
-            prompt = self._get_category_detection_prompt()
+            prompt = StandardPrompts.category_detection_prompt()
             chain = prompt | self.llm
             response = await chain.ainvoke({"object_name": object_name})
             category = response.content.strip()
@@ -404,9 +285,3 @@ class QueryAnalyzer:
                 "statistics": f"В локации {geo_place} найдено {len(objects_list)} биологических объектов.",
                 "interesting_objects": [{"name": obj, "reason": "интересный объект"} for obj in objects_list[:3]]
             }
-
-
-  
-  
-  
-  

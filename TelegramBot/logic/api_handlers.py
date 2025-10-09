@@ -393,6 +393,105 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, result: dict
         
         return messages
 
+async def handle_geo_request(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    """Обработчик для ВСЕХ географических запросов"""
+    logger.info(f"--- Запуск handle_geo_request для user_id: {user_id} ---")
+    
+    # Очищаем user_id из result (он не нужен API)
+    clean_result = result.copy()
+    clean_result.pop('user_id', None)
+    
+    # Формируем payload для API
+    payload = {
+        "location_info": clean_result.get("location_info", {}),
+        "geo_type": clean_result.get("geo_type", {})
+    }
+    
+    # Формируем URL с параметрами
+    base_url = f"{API_URLS['find_geo_special_description']}"
+    params = {
+        "query": original_query,
+        "use_gigachat_answer": "true",
+        "debug_mode": str(debug_mode).lower()
+    }
+    
+    url = f"{base_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+    
+    try:
+        logger.info(f"API CALL: URL: {url}, Payload: {json.dumps(payload, ensure_ascii=False)}")
+        
+        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+            logger.info(f"API RESPONSE: Status: {resp.status}")
+            
+            if not resp.ok:
+                logger.error(f"API вернул ошибку: {resp.status}")
+                return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
+            
+            data = await resp.json()
+            logger.info(f"API RESPONSE DATA: {data}")
+            
+            # Обрабатываем ответ
+            responses = await _process_geo_api_response(data, original_query)
+            
+            # ✅ ВАЖНО: Сохраняем в КОНТЕКСТ для будущих уточнений
+            await _update_geo_context(user_id, result, original_query)
+            
+            return responses
+            
+    except Exception as e:
+        logger.error(f"Ошибка в handle_geo_request: {e}", exc_info=True)
+        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
+
+async def _update_geo_context(user_id: str, result: dict, original_query: str):
+    """Сохраняет географические сущности в контекст пользователя"""
+    try:
+        from logic.dialogue_manager import DialogueManager
+        from utils.context_manager import RedisContextManager
+        
+        context_manager = RedisContextManager()
+        dialogue_manager = DialogueManager(context_manager)
+        
+        # Определяем категорию объекта (для географических - всегда None)
+        object_category = None
+        
+        # Сохраняем в историю диалога
+        await dialogue_manager.update_history(
+            user_id=user_id,
+            final_intent="get_geo_objects",  # или другой geo intent
+            final_entities=result,  # сохраняем ВСЕ сущности
+            object_category=object_category,
+            original_query=original_query  # ← если добавили это поле
+        )
+        
+        logger.info(f"Контекст обновлен для user_id: {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении контекста: {e}")
+            
+    except asyncio.TimeoutError:
+        logger.error("API CALL TIMEOUT: Запрос к /object/description/ превысил таймаут.")
+        return [{"type": "text", "content": "Сервер достопримечательностей не отвечает. Попробуйте позже."}]
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в handle_geo_request: {e}", exc_info=True)
+        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
+
+async def _process_geo_api_response(data: dict, original_query: str) -> list:
+    """Обрабатывает ответ от API географических объектов"""
+    
+    # Извлекаем ответ от GigaChat
+    gigachat_answer = data.get("gigachat_answer")
+    error = data.get("error")
+    
+    if error:
+        return [{"type": "text", "content": f"Извините, не удалось найти информацию: {error}"}]
+    
+    if gigachat_answer:
+        # Используем красивый ответ от GigaChat
+        return [{"type": "text", "content": gigachat_answer}]
+    else:
+        # Fallback - если ответа нет
+        return [{"type": "text", "content": f"По вашему запросу '{original_query}' информация временно недоступна."}]
+    
 async def create_llm_overview(geo_place: str, objects_list: list) -> dict:
     """
     Создает предложение увидеть умный обзор (БЕЗ вызова LLM здесь)
@@ -413,7 +512,13 @@ async def create_llm_overview(geo_place: str, objects_list: list) -> dict:
 async def handle_intent(session: aiohttp.ClientSession, intent: str, result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
     handler_kwargs: Dict[str, Any] = {"session": session, "result": result, "debug_mode": debug_mode}
     
-    if intent == "get_text":
+    if intent in ["get_geo_objects", "get_geo_info", "get_geo_count"]:
+        handler_kwargs.update({
+            "user_id": user_id,
+            "original_query": original_query
+        })
+
+    elif intent == "get_text":
         handler_kwargs.update({"user_id": user_id, "original_query": original_query})
         if "offset" in result:
             handler_kwargs["offset"] = result["offset"]
@@ -424,7 +529,11 @@ async def handle_intent(session: aiohttp.ClientSession, intent: str, result: dic
         "get_intersection_object_on_map": handle_nearest,
         "get_location": handle_draw_locate_map,
         "get_objects_in_polygon": handle_objects_in_polygon,
-        "get_comparison": handle_comparison
+        "get_comparison": handle_comparison,
+
+        "get_geo_objects": handle_geo_request,
+        "get_geo_info": handle_geo_request,
+        "get_geo_count": handle_geo_request
     }
 
     handler_func = handlers.get(intent)

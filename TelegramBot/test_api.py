@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 import asyncio
 import logging
 from bot import get_bot_response
-from settings_manager import get_user_settings, update_user_settings
+from utils.settings_manager import get_user_settings, update_user_settings
 
 logging.basicConfig(
     level=logging.INFO,
