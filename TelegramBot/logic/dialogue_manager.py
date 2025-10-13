@@ -1,180 +1,111 @@
-# --- НАЧАЛО ФАЙЛА: logic/dialogue_manager.py ---
-
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
+from copy import deepcopy
 
 from utils.context_manager import RedisContextManager
 
 logger = logging.getLogger(__name__)
-
-ACTION_VERBS = ["расскажи", "покажи", "опиши", "выглядит", "где", "найти", "растет", "обитает", "встретить"]
 
 class DialogueManager:
     def __init__(self, context_manager: RedisContextManager):
         self.context_manager = context_manager
 
     async def enrich_request(
-        self, user_id: str, query: str, intent: str, entities: Dict[str, Any]
-    ) -> Tuple[str, Dict[str, Any]]:
+        self, user_id: str, current_analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Обогащает текущий анализ данными из истории диалога.
+        Это ключевая функция для обработки уточняющих запросов.
+        """
         if not self.context_manager.redis_client:
-            return intent, entities
+            return current_analysis
 
         user_context = await self.context_manager.get_context(user_id)
         history = user_context.get("history", [])
-        last_item = history[0] if history else {}
+        last_analysis = history[0] if history else {}
         
-        # 🔴 ДОБАВИМ ЛОГИРОВАНИЕ ИСТОРИИ
-        logger.info(f"История пользователя {user_id}: {history}")
-        logger.info(f"Последний элемент истории: {last_item}")
-        
-        final_intent = intent
-        final_entities = entities.copy()
-        last_intent = last_item.get("intent")
-        last_entities = last_item.get("entities", {})
-        
-        # 🔴 ДОБАВИМ ЛОГИРОВАНИЕ ПОСЛЕДНИХ СУЩНОСТЕЙ
-        logger.info(f"Последние сущности из истории: {last_entities}")
-        
-        is_ambiguous_query = len(query.split()) <= 3 and not any(verb in query.lower() for verb in ACTION_VERBS)
+        if not last_analysis:
+            logger.debug(f"[{user_id}] Контекст пуст, обогащение не требуется.")
+            return current_analysis
 
-        # 🔄 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сначала проверяем ГЕОГРАФИЧЕСКИЕ КЛЮЧЕВЫЕ СЛОВА
-        geo_keywords = ["заказник", "музей", "памятник", "заповедник", "научн", "учрежден", "достопримечательность"]
-        query_lower = query.lower()
-        
-        has_geo_keyword = any(keyword in query_lower for keyword in geo_keywords)
-        last_was_geo = last_intent in ["get_geo_objects", "get_geo_info", "get_geo_count"]
-        
-        logger.info(f"has_geo_keyword: {has_geo_keyword}, last_was_geo: {last_was_geo}, last_intent: {last_intent}")
-        
-        # 🔄 ПРИОРИТЕТ 1: Если есть географическое ключевое слово И (история географическая ИЛИ запрос неполный)
-        if has_geo_keyword and (last_was_geo or is_ambiguous_query):
-            if last_was_geo:
-                # Берем географический intent из истории
-                final_intent = last_intent
-                logger.info(f"Географическое ключевое слово + история geo -> intent: {final_intent}")
-            else:
-                # Новый географический запрос
-                final_intent = "get_geo_objects"
-                logger.info(f"Географическое ключевое слово -> intent: {final_intent}")
-            
-            # 🔄 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда обогащаем из истории если была geo история
-            if last_was_geo and last_entities:
-                logger.info(f"Обогащаем из истории: {last_entities}")
-                
-                # Берем ВСЕ географические сущности из истории
-                if last_entities.get("location_info"):
-                    final_entities["location_info"] = last_entities["location_info"].copy()
-                    logger.info(f"Скопировали location_info: {final_entities['location_info']}")
-                else:
-                    logger.warning("В истории нет location_info!")
-                    
-                if last_entities.get("geo_type"):
-                    final_entities["geo_type"] = last_entities["geo_type"].copy()
-                    logger.info(f"Скопировали geo_type: {final_entities['geo_type']}")
-                else:
-                    logger.warning("В истории нет geo_type!")
-            
-            # Преобразуем старые сущности в новые географические (если нужно)
-            if "object" in final_entities and not final_entities.get("geo_type"):
-                # Конвертируем из старой структуры в новую
-                object_name = final_entities.pop("object")
-                final_entities.setdefault("location_info", {"exact_location": None, "region": None, "nearby_places": []})
-                final_entities.setdefault("geo_type", {"primary_type": ["Достопримечательности"], "specific_types": []})
-            
-            # Определяем specific_types по ключевым словам
-            if "заказник" in query_lower:
-                final_entities["geo_type"]["specific_types"] = ["Заказники"]
-            elif "музей" in query_lower:
-                final_entities["geo_type"]["specific_types"] = ["Музеи"]
-            elif "памятник" in query_lower:
-                final_entities["geo_type"]["specific_types"] = ["Памятники"]
-            elif "заповедник" in query_lower:
-                final_entities["geo_type"]["specific_types"] = ["Заповедники"]
-            
-            # 🔄 ДОПОЛНИТЕЛЬНОЕ ОБОГАЩЕНИЕ: Если в истории была локация, используем ее
-            if last_was_geo and last_entities.get("location_info"):
-                if not final_entities.get("location_info"):
-                    final_entities["location_info"] = {}
-                
-                # Обогащаем exact_location
-                if not final_entities["location_info"].get("exact_location") and last_entities["location_info"].get("exact_location"):
-                    final_entities["location_info"]["exact_location"] = last_entities["location_info"]["exact_location"]
-                    logger.info(f"Обогатили exact_location: {final_entities['location_info']['exact_location']}")
-                
-                # Обогащаем region  
-                if not final_entities["location_info"].get("region") and last_entities["location_info"].get("region"):
-                    final_entities["location_info"]["region"] = last_entities["location_info"]["region"]
-                    logger.info(f"Обогатили region: {final_entities['location_info']['region']}")
-        
-        # 🔄 ПРИОРИТЕТ 2: Старая логика для биологических запросов
-        elif is_ambiguous_query and last_intent:
-            logger.info(f"Неявный запрос. Заменяем интент '{final_intent}' на интент из истории: '{last_intent}'")
-            final_intent = last_intent
-            
-        elif final_intent == "unknown" and last_intent:
-            final_intent = last_intent
-            
-        # 🔄 ОБОГАЩЕНИЕ СУЩНОСТЕЙ (старая логика для биологических)
-        if final_intent not in ["get_geo_objects", "get_geo_info", "get_geo_count"]:
-            if not final_entities.get("object") and last_entities.get("object") and "object" in final_entities:
-                final_entities["object"] = last_entities.get("object")
+        # [ИСПРАВЛЕНО] Полностью переписана логика обогащения
+        logger.debug(f"[{user_id}] НАЧАЛО ОБОГАЩЕНИЯ. Текущий анализ: {current_analysis}")
+        logger.debug(f"[{user_id}] Контекст: {last_analysis}")
 
-            if not final_entities.get("geo_place") and last_entities.get("geo_place") and "geo_place" in final_entities:
-                final_entities["geo_place"] = last_entities.get("geo_place")
-            
-            if final_entities.get("object") and final_entities.get("object") == last_entities.get("object"):
-                base_features = last_entities.get("features", {}).copy()
-                new_features = entities.get("features", {})
-                base_features.update(new_features)
-                final_entities["features"] = base_features
+        # Начинаем с глубокой копии последнего контекста, это наша основа
+        final_analysis = deepcopy(last_analysis)
 
-        logger.info(f"Обогащенный запрос: intent={final_intent}, entities={final_entities}")
-        return final_intent, final_entities
+        # 1. Обновляем действие (action), если в новом запросе оно осмысленное
+        current_action = current_analysis.get("action")
+        if current_action and current_action != "unknown":
+            final_analysis["action"] = current_action
+            logger.debug(f"[{user_id}] Обновили `action` на '{current_action}' из нового запроса.")
+
+        # 2. Обновляем primary_entity, если в новом запросе оно есть
+        current_primary_entity = current_analysis.get("primary_entity")
+        if current_primary_entity and current_primary_entity.get("name"):
+            final_analysis["primary_entity"] = current_primary_entity
+            logger.debug(f"[{user_id}] Обновили `primary_entity` на '{current_primary_entity}' из нового запроса.")
+        
+        # 3. Обновляем secondary_entity, если в новом запросе оно есть
+        current_secondary_entity = current_analysis.get("secondary_entity")
+        if current_secondary_entity and current_secondary_entity.get("name"):
+            final_analysis["secondary_entity"] = current_secondary_entity
+            logger.debug(f"[{user_id}] Обновили `secondary_entity` на '{current_secondary_entity}' из нового запроса.")
+
+        # 4. ОБЪЕДИНЯЕМ АТРИБУТЫ: новые атрибуты перезаписывают старые
+        # Это решает проблему "А осенью?"
+        current_attributes = current_analysis.get("attributes", {})
+        if current_attributes:
+            if "attributes" not in final_analysis:
+                final_analysis["attributes"] = {}
+            final_analysis["attributes"].update(current_attributes)
+            logger.debug(f"[{user_id}] Объединили атрибуты. Результат: {final_analysis['attributes']}")
+
+        logger.info(f"[{user_id}] ИТОГ ОБОГАЩЕНИЯ: {final_analysis}")
+        return final_analysis
+
+    async def update_history(self, user_id: str, final_analysis: Dict[str, Any]):
+        """
+        Сохраняет последний успешный анализ в историю пользователя.
+        """
+        primary_entity = final_analysis.get("primary_entity")
+        if not primary_entity or not primary_entity.get("name"):
+            logger.debug(f"[{user_id}] Пропуск сохранения в историю: в анализе нет `primary_entity`.")
+            return
+
+        user_context = await self.context_manager.get_context(user_id)
+        history = user_context.get("history", [])
+        
+        updated_history = [final_analysis] + history[:1]
+        user_context['history'] = updated_history
+        
+        await self.context_manager.set_context(user_id, user_context)
+        logger.info(f"[{user_id}] Контекст сохранен: {final_analysis}")
 
     async def get_comparison_pair(
-        self, user_id: str, current_intent: str, current_entities: Dict[str, Any], current_category: Optional[str]
+        self, user_id: str, current_analysis: Dict[str, Any]
     ) -> Optional[Dict[str, str]]:
         """
-        Только читает историю и проверяет, можно ли предложить сравнение.
+        Проверяет, можно ли предложить сравнение на основе текущего и предыдущего запроса.
         """
         if not self.context_manager.redis_client:
             return None
 
         user_context = await self.context_manager.get_context(user_id)
         history = user_context.get("history", [])
-        last_item = history[0] if history else {}
+        last_analysis = history[0] if history else {}
 
-        current_object = current_entities.get("object")
-        last_object = last_item.get("object")
-        last_category = last_item.get("category")
+        current_entity = current_analysis.get("primary_entity", {})
+        last_entity = last_analysis.get("primary_entity", {})
 
-        if (current_intent in ["get_text", "get_picture"] and
-                current_object and current_category and
-                last_object and last_category == current_category and
-                last_object != current_object):
-            return {"object1": last_object, "object2": current_object}
+        if (current_analysis.get("action") in ["describe", "show_image"] and
+                current_entity.get("type") == "Biological" and
+                last_entity.get("type") == "Biological" and
+                current_entity.get("name") and last_entity.get("name") and
+                current_entity.get("name") != last_entity.get("name")):
+            
+            logger.info(f"[{user_id}] Найдена пара для сравнения: {last_entity['name']} и {current_entity['name']}")
+            return {"object1": last_entity["name"], "object2": current_entity["name"]}
         
         return None
-
-    async def update_history(
-    self, user_id: str, final_intent: str, final_entities: Dict[str, Any], 
-    object_category: Optional[str], original_query: str = None  # ← ДОБАВИТЬ
-):
-        if final_entities.get("object") or final_entities.get("geo_place"):
-            user_context = await self.context_manager.get_context(user_id)
-            history = user_context.get("history", [])
-            
-            new_history_item = {
-                "intent": final_intent,
-                "original_query": original_query,  # ← СОХРАНИТЬ
-                "entities": final_entities,
-                "object": final_entities.get("object"),
-                "category": object_category
-            }
-            
-            updated_history = [new_history_item] + history[:1]
-            user_context['history'] = updated_history
-            await self.context_manager.set_context(user_id, user_context)
-            logger.info(f"История для user_id={user_id} обновлена: {new_history_item}")
-
-# --- КОНЕЦ ФАЙЛА: logic/dialogue_manager.py ---

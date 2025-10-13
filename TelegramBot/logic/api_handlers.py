@@ -9,6 +9,8 @@ from typing import Dict, Any, List
 
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
+from utils.context_manager import RedisContextManager
+from logic.entity_normalizer import normalize_entity_name
 
 logger = logging.getLogger(__name__)
 
@@ -35,65 +37,97 @@ async def call_gigachat_fallback_service(session: aiohttp.ClientSession, questio
         return None
 
 # --- Обработчики API ---
+async def check_simplified_search(session: aiohttp.ClientSession, object_nom: str, features: dict, debug_mode: bool) -> bool:
+    """Проверяет, вернет ли упрощенный запрос с заданными признаками результаты."""
+    try:
+        url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
+        payload = {"species_name": object_nom, "features": features}
+        
+        logger.debug(f"Проверка упрощенного запроса: {object_nom} с features: {features}")
+        
+        async with session.post(url, json=payload, timeout=10) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                has_images = bool(data.get("images"))
+                logger.debug(f"Результат проверки для {object_nom} {features}: {has_images}")
+                return has_images
+            return False
+    except Exception as e:
+        logger.warning(f"Ошибка при проверке упрощенного запроса для {object_nom}: {e}")
+        return False
 
-async def handle_get_picture(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
-    logger.info(f"--- Запуск handle_get_picture с result: {result} ---")
-    messages = []
-    object_nom = result.get("object")
-    features = result.get("features", {})
+async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
+    logger.info(f"--- Запуск handle_get_picture с analysis: {analysis} ---")
     
+    primary_entity = analysis.get("primary_entity", {})
+    object_nom = primary_entity.get("name")
+    attributes = analysis.get("attributes", {})
+    
+    if not object_nom:
+        return [{"type": "text", "content": "Не указан объект для поиска изображения."}]
+
+    features = {}
+    if attributes.get("season"): features["season"] = attributes["season"]
+    if attributes.get("habitat"): features["habitat"] = attributes["habitat"]
+    if attributes.get("state") == "цветение": features["flowering"] = True
+
     url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
     payload = {"species_name": object_nom, "features": features}
 
     try:
-        logger.info(f"API CALL: handle_get_picture. URL: {url}, Payload: {json.dumps(payload, ensure_ascii=False)}")
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            logger.info(f"API RESPONSE: handle_get_picture. Status: {resp.status}")
-            raw_text = await resp.text()
-            try:
-                data = json.loads(raw_text)
-                logger.info(f"API RESPONSE DATA (JSON): {data}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Не удалось прочитать JSON из ответа API: {e}")
-                logger.error(f"RAW RESPONSE TEXT: {raw_text}")
-                return [{"type": "text", "content": f"Ошибка сервера: неверный формат ответа (status {resp.status})."}]
+            if not resp.ok or not (await resp.json()).get("images"):
+                logger.warning(f"[{user_id}] Изображения для '{object_nom}' с признаками {features} не найдены. Запуск логики fallback.")
+                
+                # --- [НОВАЯ ЛОГИКА FALLBACK] ---
+                if not attributes: # Если изначально не было атрибутов, упрощать нечего
+                    return [{"type": "text", "content": f"Извините, я не нашел изображений для «{object_nom}»."}]
 
-            # === ИЗМЕНЕНИЕ ЗДЕСЬ: Передаем user_id в fallback ===
-            if not resp.ok or data.get("status") == "not_found" or not data.get("images"):
-                # Проверяем, есть ли признаки для упрощения
-                if len(features) >= 1:  # Если есть хотя бы один признак - предлагаем упрощение
-                    # Получаем user_id из result (должен передаваться из gigachat_handler)
-                    user_id = result.get("user_id", "unknown")
-                    return await handle_picture_fallback(session, result, debug_mode, user_id)
-                else:
-                    return [{"type": "text", "content": f"Извините, я не нашел изображений для '{object_nom}'."}]
+                fallback_options = []
+                # Проверяем каждый возможный вариант упрощения
+                if "season" in attributes:
+                    test_features = features.copy(); test_features.pop("season")
+                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
+                        fallback_options.append({"text": "❄️ Без сезона", "callback_data": f"fallback:no_season:{object_nom}"})
+                
+                if "habitat" in attributes:
+                    test_features = features.copy(); test_features.pop("habitat")
+                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
+                        fallback_options.append({"text": "🌲 Без места", "callback_data": f"fallback:no_habitat:{object_nom}"})
 
+                # Всегда предлагаем вариант "только объект", если были хоть какие-то атрибуты
+                if await check_simplified_search(session, object_nom, {}, debug_mode):
+                    fallback_options.append({"text": "🖼️ Только объект", "callback_data": f"fallback:basic:{object_nom}"})
+                
+                if not fallback_options:
+                    return [{"type": "text", "content": f"Извините, не нашел изображений для «{object_nom}» с любыми комбинациями признаков."}]
+
+                # Сохраняем исходные атрибуты в Redis, чтобы callback мог их использовать
+                context_manager = RedisContextManager()
+                fallback_key = f"fallback_attributes:{user_id}"
+                await context_manager.set_context(fallback_key, attributes)
+                await context_manager.redis_client.expire(fallback_key, 600) # Контекст живет 10 минут
+                logger.info(f"[{user_id}] Сохранены атрибуты для fallback: {attributes}")
+                
+                buttons = [fallback_options[i:i+2] for i in range(0, len(fallback_options), 2)]
+                
+                return [{"type": "clarification", 
+                         "content": f"🖼️ К сожалению, у меня нет точных фотографий для вашего запроса.\n\nДавайте попробуем упростить? Вот что я нашел:",
+                         "buttons": buttons}]
+                # --- КОНЕЦ ЛОГИКИ FALLBACK ---
+
+            data = await resp.json()
             images = data.get("images", [])
-            sent_images_count = 0
-            for img in images[:5]:
-                if isinstance(img, dict) and "image_path" in img:
-                    image_url = img["image_path"]
-                    try:
-                        async with session.head(image_url, timeout=5, allow_redirects=True) as check_resp:
-                            if check_resp.status == 200:
-                                messages.append({"type": "image", "content": image_url})
-                                sent_images_count += 1
-                    except Exception as e:
-                        logger.warning(f"Не удалось проверить URL изображения {image_url}: {e}")
+            messages = [{"type": "image", "content": img["image_path"]} for img in images[:5] if isinstance(img, dict) and "image_path" in img]
             
-            if sent_images_count == 0:
-                 messages.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для '{object_nom}'."})
+            if not messages:
+                 return [{"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."}]
+            return messages
 
-    except asyncio.TimeoutError:
-        logger.error("API CALL TIMEOUT: Запрос к /search_images_by_features превысил таймаут.")
-        return [{"type": "text", "content": "Сервер изображений не отвечает. Попробуйте позже."}]
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_get_picture: {e}", exc_info=True)
-        messages.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."})
-
-    logger.info(f"--- Завершение handle_get_picture. Отправляется {len(messages)} сообщений. ---")
-    return messages
-
+        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."}]
+    
 async def check_simplified_search(session: aiohttp.ClientSession, object_nom: str, features: dict, debug_mode: bool) -> bool:
     """
     Проверяет, вернет ли упрощенный запрос результаты
@@ -212,127 +246,133 @@ async def handle_picture_fallback(session: aiohttp.ClientSession, result: dict, 
         "buttons": buttons
     }]
 
-async def handle_get_description(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool, offset: int = 0) -> list:
-    object_nom = result.get("object")
+async def handle_get_description(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    primary_entity = analysis.get("primary_entity", {})
+    object_nom = primary_entity.get("name")
     
+    # [НОВОЕ] Получаем offset из analysis. Если его нет, по умолчанию 0.
+    offset = analysis.get("offset", 0)
+
+    if not object_nom:
+        return [{"type": "text", "content": "Не указан объект для поиска описания."}]
+        
     find_url = f"{API_URLS['find_species_with_description']}"
-    payload = {"name": object_nom, "limit": 4, "offset": offset}
+    payload = {"name": object_nom, "limit": 4, "offset": offset} # Используем offset в запросе
+    logger.debug(f"[{user_id}] Запрос к `find_species_with_description` с payload: {payload}")
 
     try:
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
             if not find_resp.ok:
+                logger.error(f"[{user_id}] API `find_species` вернул ошибку {find_resp.status} для '{object_nom}'")
                 return [{"type": "text", "content": f"Извините, произошла ошибка при поиске '{object_nom}'."}]
             
             data = await find_resp.json()
             status = data.get("status")
+            logger.debug(f"[{user_id}] Ответ от `find_species`: status='{status}', matches={data.get('matches')}")
 
             if status == "ambiguous":
                 matches = data.get("matches", [])
+                
+                # Формируем основные кнопки с вариантами
                 buttons = [[{"text": match, "callback_data": f"clarify_object:{match}"}] for match in matches]
+                
+                # [НОВОЕ] Формируем ряд с системными кнопками
                 system_buttons_row = []
+                # Добавляем "Любую", если есть хотя бы один вариант
                 if matches:
-                    system_buttons_row.append({"text": "Любую 🎲", "callback_data": f"clarify_object:{matches[0]}"})
+                    system_buttons_row.append({"text": "🎲 Любую", "callback_data": f"clarify_object:{matches[0]}"})
 
-                has_more = data.get("has_more", False)
-                if has_more:
+                # Добавляем "Поискать еще", если API сообщил, что есть еще результаты
+                if data.get("has_more", False):
                     new_offset = offset + len(matches)
-                    callback_str = f"clarify_more:{object_nom}:{new_offset}"
-                    system_buttons_row.append({"text": "Поискать еще 🔍", "callback_data": callback_str})
+                    # Создаем callback_data для пагинации
+                    system_buttons_row.append({"text": "🔍 Поискать еще", "callback_data": f"clarify_more:{object_nom}:{new_offset}"})
 
+                # Если мы сформировали хотя бы одну системную кнопку, добавляем этот ряд в общую клавиатуру
                 if system_buttons_row:
                     buttons.append(system_buttons_row)
-
-                return [{
-                    "type": "clarification",
-                    "content": f"Я знаю несколько видов для '{object_nom}'. Уточните, какой именно вас интересует?",
-                    "buttons": buttons
-                }]
+                
+                return [{ "type": "clarification", "content": f"Я знаю несколько видов для «{object_nom}». Уточните, какой именно вас интересует?", "buttons": buttons }]
 
             elif status == "found":
+                # ... (эта часть без изменений)
                 canonical_name = data.get("matches", [object_nom])[0]
-                logger.info(f"Найдено точное совпадение: '{canonical_name}'. Запрашиваю описание...")
-
                 desc_url = f"{API_URLS['get_description']}?species_name={canonical_name}&debug_mode={str(debug_mode).lower()}"
+                logger.debug(f"[{user_id}] Объект найден: '{canonical_name}'. Запрос описания по URL: {desc_url}")
+
                 async with session.get(desc_url, timeout=DEFAULT_TIMEOUT) as desc_resp:
-                    if not desc_resp.ok:
-                         return [{"type": "text", "content": f"Нашел объект '{canonical_name}', но не смог загрузить его описание."}]
-                    
-                    desc_data = await desc_resp.json()
-                    descriptions = desc_data.get("descriptions", [])
-                    text = ""
-                    if descriptions:
-                        first_item = descriptions[0]
-                        if isinstance(first_item, dict): text = first_item.get("content", "")
-                        elif isinstance(first_item, str): text = first_item
-                    
-                    if text:
-                        return [{"type": "text", "content": text, "canonical_name": canonical_name}]
+                    if desc_resp.ok:
+                        desc_data = await desc_resp.json()
+                        descriptions = desc_data.get("descriptions", [])
+                        text = ""
+                        
+                        if descriptions:
+                            first_item = descriptions[0]
+                            if isinstance(first_item, dict):
+                                text = first_item.get("content", "")
+                            elif isinstance(first_item, str):
+                                text = first_item
+                        
+                        if text:
+                            logger.info(f"[{user_id}] Описание для '{canonical_name}' успешно найдено и отправлено.")
+                            return [{"type": "text", "content": text, "canonical_name": canonical_name}]
             
-            logger.warning(f"Описание для '{object_nom}' не найдено ни на одном из этапов.")
+            # ... (остальная часть функции без изменений)
+            logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено ни на одном из этапов.")
             if get_user_fallback_setting(user_id):
+                logger.info(f"[{user_id}] Запускаем GigaChat fallback для запроса: '{original_query}'")
                 fallback_answer = await call_gigachat_fallback_service(session, original_query)
-                if fallback_answer: return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
+                if fallback_answer: 
+                    return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
             
-            return [{"type": "text", "content": f"Извините, описание для '{object_nom}' не найдено."}]
+            return [{"type": "text", "content": f"К сожалению, у меня нет описания для «{object_nom}»."}]
 
     except Exception as e:
-        logger.error(f"Ошибка в handle_get_description: {e}", exc_info=True)
+        logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
         return [{"type": "text", "content": "Проблема с подключением к серверу описаний."}]
-
-async def handle_comparison(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
-    object1 = result.get("object1")
-    object2 = result.get("object2")
+    
+async def handle_comparison(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+    # TODO: Логика сравнения требует адаптации под новую систему контекста (Шаг 4)
+    # Пока что это просто заглушка
+    object1 = analysis.get("primary_entity", {}).get("name")
+    object2 = analysis.get("secondary_entity", {}).get("name")
     if not object1 or not object2:
         return [{"type": "text", "content": "Недостаточно данных для сравнения."}]
-
-    prompt = f"Сравни два объекта: '{object1}' и '{object2}'. Ответ дай СТРОГО в виде списка с буллитами (•). Не используй заголовки или вступления. Начни сразу с первого пункта сравнения."
-    comparison_text = await call_gigachat_fallback_service(session, prompt)
-
-    if comparison_text:
-        full_answer = f"Отлично! Вот основные отличия между **{object1}** и **{object2}**:\n\n{comparison_text}"
-        return [{"type": "text", "content": full_answer, "parse_mode": "Markdown"}]
-    else:
-        return [{"type": "text", "content": "Извините, не удалось сгенерировать сравнение."}]
+    return [{"type": "text", "content": f"Сравнение между {object1} и {object2} пока в разработке."}]
 
 async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, object_name: str, debug_mode: bool, geo_name: str = None) -> list:
-    messages = []
-    full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
-    
-    async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
+    # Эта вспомогательная функция остается почти без изменений
+    async with session.post(f"{url}?debug_mode={str(debug_mode).lower()}", json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
         map_data = await map_resp.json()
+        if not map_resp.ok: return [{"type": "text", "content": "Не удалось построить карту."}]
 
-        if not map_resp.ok:
-            return [{"type": "text", "content": "Не удалось построить карту."}]
+        names = sorted(list(set(name.capitalize() for name in map_data.get("names", []))))
+        caption = ""
+        if names:
+            text_header = f"📍 Рядом с '{geo_name}' вы можете встретить '{object_name}' в местах:\n" if geo_name else f"📍 '{object_name.capitalize()}' встречается в местах:\n"
+            caption = text_header + "• " + "\n• ".join(names)
 
-        names = map_data.get("names", [])
-        unique_names = sorted(list(set(name.capitalize() for name in names)))
-        
-        caption_text = ""
-        if unique_names:
-            text = (f"📍 Рядом с '{geo_name}' вы можете встретить '{object_name}' в местах:\n" if geo_name 
-                    else f"📍 '{object_name.capitalize()}' встречается в местах:\n")
-            caption_text = text + "• " + "\n• ".join(unique_names)
-        
+        messages = []
         if map_data.get("status") == "no_objects":
-            text = (f"К сожалению, я не нашел '{object_name}' поблизости от '{geo_name}'." if geo_name
-                    else f"К сожалению, я не смог найти ареал обитания для '{object_name}'.")
+            text = f"К сожалению, я не нашел '{object_name}'" + (f" поблизости от '{geo_name}'." if geo_name else " на карте.")
             messages.append({"type": "text", "content": text})
-            
+
         if map_data.get("interactive_map") and map_data.get("static_map"):
-            messages.append({"type": "map", "static": map_data["static_map"], "interactive": map_data["interactive_map"], "caption": caption_text or f"Карта для: {object_name}"})
-        elif caption_text:
-            messages.append({"type": "text", "content": caption_text})
-
+            messages.append({"type": "map", "static": map_data["static_map"], "interactive": map_data["interactive_map"], "caption": caption})
+        elif caption:
+            messages.append({"type": "text", "content": caption})
         return messages
+    
+async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+    # [НОВОЕ] Извлекаем данные из `analysis`
+    object_nom = analysis.get("primary_entity", {}).get("name")
+    geo_nom = analysis.get("secondary_entity", {}).get("name")
+    if not object_nom or not geo_nom:
+        return [{"type": "text", "content": "Недостаточно данных для поиска: нужен и объект, и место."}]
 
-async def handle_nearest(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
-    object_nom = result.get("object")
-    geo_nom = result.get("geo_place")
     try:
-        coords_url = API_URLS["get_coords"]
-        async with session.post(coords_url, json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT) as resp:
-            if not resp.ok or (await resp.json()).get("status") == "not_found":
-                return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
+        async with session.post(API_URLS["get_coords"], json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT) as resp:
+            if not resp.ok: return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
             coords = await resp.json()
 
         payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom, "object_type": "geographical_entity"}
@@ -341,107 +381,119 @@ async def handle_nearest(session: aiohttp.ClientSession, result: dict, debug_mod
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске ближайших мест."}]
 
-async def handle_draw_locate_map(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
-    object_nom = result.get("object")
-    payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom, "object_type": "geographical_entity"}
-    try:
-        return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
-    except Exception as e:
-        logger.error(f"Ошибка в handle_draw_locate_map: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при построении карты ареала."}]
-
-async def handle_objects_in_polygon(session: aiohttp.ClientSession, result: dict, debug_mode: bool) -> list:
-    geo_nom = result.get("geo_place")
+async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+    # [НОВОЕ] Извлекаем данные из `analysis`
+    object_nom = analysis.get("primary_entity", {}).get("name")
+    if not object_nom: return [{"type": "text", "content": "Не указан объект для отображения на карте."}]
     
-    # Существующий запрос к API
+    payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom, "object_type": "geographical_entity"}
+    return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
+
+async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+    geo_nom = analysis.get("secondary_entity", {}).get("name")
+    if not geo_nom:
+        logger.error("Ошибка в handle_objects_in_polygon: не найден `secondary_entity` в анализе.")
+        return [{"type": "text", "content": "Не указано место для поиска объектов."}]
+    
     url = f"{API_URLS['objects_in_polygon']}?debug_mode={str(debug_mode).lower()}"
     payload = {"name": geo_nom, "buffer_radius_km": 5}
-    
-    async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-        if not resp.ok:
-            return [{"type": "text", "content": f"Не удалось найти полигон для '{geo_nom}'."}]
-        
-        data = await resp.json()
-        objects_list = data.get("all_biological_names", [])
-        
-        messages = []
-        
-        # 1. Показываем карту (как сейчас)
-        if data.get("interactive_map") and data.get("static_map"):
-            caption = f"📍 Объекты в районе: {geo_nom}"
-            if objects_list:
-                caption += f"\n\nНайдено объектов: {len(objects_list)}"
-            
-            messages.append({
-                "type": "map", 
-                "static": data["static_map"], 
-                "interactive": data["interactive_map"], 
-                "caption": caption
-            })
-        
-        # 2. Если много объектов - предлагаем УМНЫЙ обзор через LLM
-        if len(objects_list) > 3:
-            # НОВОЕ: вместо create_exploration_offer сразу показываем умный обзор
-            overview_msg = await create_llm_overview(geo_nom, objects_list)
-            messages.append(overview_msg)
-        # 3. Если мало - показываем простой список
-        elif objects_list:
-            simple_list = f"🌿 В районе **{geo_nom}** найдены:\n• " + "\n• ".join(objects_list)
-            messages.append({"type": "text", "content": simple_list})
-        else:
-            messages.append({"type": "text", "content": f"В районе '{geo_nom}' не найдено известных объектов."})
-        
-        return messages
-
-async def handle_geo_request(session: aiohttp.ClientSession, result: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
-    """Обработчик для ВСЕХ географических запросов"""
-    logger.info(f"--- Запуск handle_geo_request для user_id: {user_id} ---")
-    
-    # Очищаем user_id из result (он не нужен API)
-    clean_result = result.copy()
-    clean_result.pop('user_id', None)
-    
-    # Формируем payload для API
-    payload = {
-        "location_info": clean_result.get("location_info", {}),
-        "geo_type": clean_result.get("geo_type", {})
-    }
-    
-    # Формируем URL с параметрами
-    base_url = f"{API_URLS['find_geo_special_description']}"
-    params = {
-        "query": original_query,
-        "use_gigachat_answer": "true",
-        "debug_mode": str(debug_mode).lower()
-    }
-    
-    url = f"{base_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+    logger.debug(f"Запрос к `objects_in_polygon` с payload: {payload}")
     
     try:
-        logger.info(f"API CALL: URL: {url}, Payload: {json.dumps(payload, ensure_ascii=False)}")
-        
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            logger.info(f"API RESPONSE: Status: {resp.status}")
-            
             if not resp.ok:
-                logger.error(f"API вернул ошибку: {resp.status}")
+                logger.error(f"API `objects_in_polygon` вернул ошибку {resp.status} для '{geo_nom}'")
+                return [{"type": "text", "content": f"Не удалось найти информацию для '{geo_nom}'."}]
+            
+            data = await resp.json()
+            objects_list = data.get("all_biological_names", [])
+
+            # 1. Формируем базовый текст
+            if objects_list:
+                caption = f"🗺️ **В районе «{geo_nom}» я нашел {len(objects_list)} биологических объектов.**\n\nХотите увидеть краткий умный обзор или посмотреть полный список?"
+            else:
+                caption = f"В районе «{geo_nom}» не найдено известных мне биологических объектов."
+
+            # 2. Формируем проактивные кнопки
+            buttons = []
+            if len(objects_list) > 0:
+                buttons.append([
+                    {"text": "🎯 Умный обзор", "callback_data": f"explore:overview:{geo_nom}"},
+                    {"text": "📋 Полный список", "callback_data": f"explore:full_list:{geo_nom}"}
+                ])
+            
+            # [КЛЮЧЕВОЕ ИЗМЕНЕНИЕ] Добавляем кнопку для интерактивной карты, если она есть
+            interactive_map_url = data.get("interactive_map")
+            if interactive_map_url:
+                buttons.append([
+                    {"text": "🌍 Посмотреть на интерактивной карте", "url": interactive_map_url}
+                ])
+
+            # 3. Собираем финальный ответ
+            if data.get("static_map"):
+                logger.debug(f"Найдена карта для '{geo_nom}'. Отправка карты с проактивными кнопками.")
+                return [{
+                    "type": "clarification_map",
+                    "static_map": data["static_map"],
+                    "content": caption,
+                    "buttons": buttons
+                }]
+            else:
+                logger.debug(f"Карта не найдена для '{geo_nom}'. Отправка текста с проактивными кнопками.")
+                return [{
+                    "type": "clarification",
+                    "content": caption,
+                    "buttons": buttons
+                }]
+
+    except Exception as e:
+        logger.error(f"Критическая ошибка в `handle_objects_in_polygon`: {e}", exc_info=True)
+        return [{"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."}]
+    
+async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    primary_entity = analysis.get("primary_entity", {})
+    secondary_entity = analysis.get("secondary_entity", {})
+    
+    location_name = secondary_entity.get("name")
+    # Если в secondary_entity нет локации (например, запрос "перечисли все заповедники"),
+    # то локацией может быть primary_entity, если это GeoPlace.
+    if not location_name and primary_entity.get("type") == "GeoPlace":
+        location_name = primary_entity.get("name")
+    
+    # Нормализуем имя основной сущности
+    raw_entity_name = primary_entity.get("name")
+    canonical_entity_name = normalize_entity_name(raw_entity_name)
+    
+    # Формируем geo_type в зависимости от результата нормализации
+    if canonical_entity_name is None:
+        # Это случай "все достопримечательности"
+        geo_type_payload = {"primary_type": [""], "specific_types": [""]}
+    else:
+        # Это случай с конкретным типом (Музеи, Наука и т.д.)
+        geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
+        
+    payload = {
+        "location_info": { "exact_location": location_name, "region": "", "nearby_places": [] },
+        "geo_type": geo_type_payload
+    }
+    
+    url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+    logger.info(f"Запрос к `find_geo_special_description` с payload: {payload}")
+    
+    try:
+        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+            if not resp.ok:
+                logger.error(f"API `find_geo_special_description` вернул ошибку {resp.status}. Payload: {payload}")
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()
-            logger.info(f"API RESPONSE DATA: {data}")
-            
-            # Обрабатываем ответ
-            responses = await _process_geo_api_response(data, original_query)
-            
-            # ✅ ВАЖНО: Сохраняем в КОНТЕКСТ для будущих уточнений
-            await _update_geo_context(user_id, result, original_query)
-            
-            return responses
+            answer = data.get("gigachat_answer") or data.get("error", "Не удалось найти информацию.")
+            return [{"type": "text", "content": answer}]
             
     except Exception as e:
-        logger.error(f"Ошибка в handle_geo_request: {e}", exc_info=True)
+        logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
-
+    
 async def _update_geo_context(user_id: str, result: dict, original_query: str):
     """Сохраняет географические сущности в контекст пользователя"""
     try:
