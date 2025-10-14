@@ -28,7 +28,7 @@ class DialogueManager:
             logger.debug(f"[{user_id}] Контекст пуст, обогащение не требуется.")
             return current_analysis
 
-        # [ИСПРАВЛЕНО] Полностью переписана логика обогащения
+        # Полностью переписана логика обогащения
         logger.debug(f"[{user_id}] НАЧАЛО ОБОГАЩЕНИЯ. Текущий анализ: {current_analysis}")
         logger.debug(f"[{user_id}] Контекст: {last_analysis}")
 
@@ -54,7 +54,6 @@ class DialogueManager:
             logger.debug(f"[{user_id}] Обновили `secondary_entity` на '{current_secondary_entity}' из нового запроса.")
 
         # 4. ОБЪЕДИНЯЕМ АТРИБУТЫ: новые атрибуты перезаписывают старые
-        # Это решает проблему "А осенью?"
         current_attributes = current_analysis.get("attributes", {})
         if current_attributes:
             if "attributes" not in final_analysis:

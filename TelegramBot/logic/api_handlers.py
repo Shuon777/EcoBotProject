@@ -451,25 +451,20 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
         return [{"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."}]
     
 async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
-    primary_entity = analysis.get("primary_entity", {})
-    secondary_entity = analysis.get("secondary_entity", {})
-    
+    # [КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ] Добавляем `or {}` для защиты от None
+    primary_entity = analysis.get("primary_entity") or {}
+    secondary_entity = analysis.get("secondary_entity") or {}
+
     location_name = secondary_entity.get("name")
-    # Если в secondary_entity нет локации (например, запрос "перечисли все заповедники"),
-    # то локацией может быть primary_entity, если это GeoPlace.
     if not location_name and primary_entity.get("type") == "GeoPlace":
         location_name = primary_entity.get("name")
     
-    # Нормализуем имя основной сущности
     raw_entity_name = primary_entity.get("name")
     canonical_entity_name = normalize_entity_name(raw_entity_name)
     
-    # Формируем geo_type в зависимости от результата нормализации
     if canonical_entity_name is None:
-        # Это случай "все достопримечательности"
-        geo_type_payload = {"primary_type": [""], "specific_types": [""]}
+        geo_type_payload = {"primary_type": [], "specific_types": []}
     else:
-        # Это случай с конкретным типом (Музеи, Наука и т.д.)
         geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
         
     payload = {
@@ -493,7 +488,7 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
-    
+     
 async def _update_geo_context(user_id: str, result: dict, original_query: str):
     """Сохраняет географические сущности в контекст пользователя"""
     try:
