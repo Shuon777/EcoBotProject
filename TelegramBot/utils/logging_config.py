@@ -1,33 +1,24 @@
-# --- ФАЙЛ: utils/logging_config.py ---
+# Файл: TelegramBot/utils/logging_config.py
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import sys
 
-LOG_FILE_PATH = "bot.log" # Имя файла логов, он появится в папке TelegramBot
+LOG_FILE_PATH = "bot.log"
+UNHANDLED_QUERIES_LOG_PATH = "unhandled_queries.log" # Имя нового файла
 
 def setup_logging():
     """Настраивает логирование в файл с ротацией и в консоль."""
     
-    # Создаем основной логгер
+    # --- Основной логгер (без изменений) ---
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO) # Устанавливаем минимальный уровень логов
-
-    # --- Форматтер: как будут выглядеть строки лога ---
+    root_logger.setLevel(logging.INFO)
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-
-    # --- Обработчик 1: Вывод в консоль (stdout) ---
-    # Оставляем его, чтобы видеть логи в реальном времени, например, через journalctl
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
     root_logger.addHandler(stream_handler)
-
-    # --- Обработчик 2: Запись в файл с ротацией ---
-    # TimedRotatingFileHandler - идеальный выбор для долго работающих приложений.
-    # when='midnight' - новый файл будет создаваться каждую полночь.
-    # backupCount=7 - будет храниться 7 старых файлов логов (за последнюю неделю).
     file_handler = TimedRotatingFileHandler(
         LOG_FILE_PATH, 
         when='midnight', 
@@ -37,5 +28,21 @@ def setup_logging():
     )
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
+    # --- Конец основного логгера ---
+
+    # --- НАЧАЛО НОВОГО БЛОКА ---
+    # Создаем и настраиваем специальный логгер для нераспознанных запросов
+    unhandled_logger = logging.getLogger("unhandled")
+    unhandled_logger.setLevel(logging.INFO)
+    unhandled_logger.propagate = False # Важно! Чтобы сообщения не дублировались в root_logger
+    
+    # Формат для этого логгера будет проще: только дата и сообщение
+    unhandled_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    
+    unhandled_file_handler = logging.FileHandler(UNHANDLED_QUERIES_LOG_PATH, encoding='utf-8')
+    unhandled_file_handler.setFormatter(unhandled_formatter)
+    unhandled_logger.addHandler(unhandled_file_handler)
+    # --- КОНЕЦ НОВОГО БЛОКА ---
 
     logging.info("Логирование настроено для вывода в консоль и в файл.")
+    logging.info(f"Нераспознанные запросы будут сохраняться в: {UNHANDLED_QUERIES_LOG_PATH}")

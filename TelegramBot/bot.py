@@ -11,6 +11,7 @@ from utils.settings_manager import get_user_settings
 from handlers.general import register_general_handlers
 from handlers.rasa_handler import RasaHandler, register_rasa_handlers
 from handlers.gigachat_handler import GigaChatHandler
+from handlers.inline_handler import register_inline_handlers
 from utils.logging_config import setup_logging
 from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
@@ -43,6 +44,7 @@ async def on_startup(dispatcher):
         # --- Регистрация обработчиков ---
         register_general_handlers(dispatcher)
         register_rasa_handlers(dispatcher, rasa_h)
+        register_inline_handlers(dispatcher)
         
         dispatcher.register_callback_query_handler(
             gigachat_h.process_callback, 

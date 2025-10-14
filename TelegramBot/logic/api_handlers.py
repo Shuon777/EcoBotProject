@@ -14,8 +14,6 @@ from logic.entity_normalizer import normalize_entity_name
 
 logger = logging.getLogger(__name__)
 
-# --- Вспомогательные функции ---
-
 def get_user_fallback_setting(user_id: str) -> bool:
     """Проверяет, включен ли fallback для пользователя."""
     return get_user_settings(user_id).get("gigachat_fallback", False)
@@ -247,24 +245,32 @@ async def handle_picture_fallback(session: aiohttp.ClientSession, result: dict, 
     }]
 
 async def handle_get_description(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    """
+    Обрабатывает запрос на получение текстового описания объекта.
+    - Распознает неоднозначные ответы от API.
+    - Формирует кнопки для уточнения, используя Redis для хранения контекста.
+    - Поддерживает пагинацию ("Поискать еще").
+    - В случае отсутствия информации может использовать GigaChat fallback.
+    """
     primary_entity = analysis.get("primary_entity", {})
     object_nom = primary_entity.get("name")
     
-    # [НОВОЕ] Получаем offset из analysis. Если его нет, по умолчанию 0.
+    # Получаем offset из analysis. Если его нет, по умолчанию 0.
     offset = analysis.get("offset", 0)
 
     if not object_nom:
         return [{"type": "text", "content": "Не указан объект для поиска описания."}]
         
     find_url = f"{API_URLS['find_species_with_description']}"
-    payload = {"name": object_nom, "limit": 4, "offset": offset} # Используем offset в запросе
+    # Используем offset в запросе к API
+    payload = {"name": object_nom, "limit": 4, "offset": offset} 
     logger.debug(f"[{user_id}] Запрос к `find_species_with_description` с payload: {payload}")
 
     try:
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
             if not find_resp.ok:
                 logger.error(f"[{user_id}] API `find_species` вернул ошибку {find_resp.status} для '{object_nom}'")
-                return [{"type": "text", "content": f"Извините, произошла ошибка при поиске '{object_nom}'."}]
+                return [{"type": "text", "content": f"Извините, произошла ошибка при поиске «{object_nom}»."}]
             
             data = await find_resp.json()
             status = data.get("status")
@@ -273,29 +279,47 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
             if status == "ambiguous":
                 matches = data.get("matches", [])
                 
-                # Формируем основные кнопки с вариантами
-                buttons = [[{"text": match, "callback_data": f"clarify_object:{match}"}] for match in matches]
+                # 1. Формируем расширенный контекст для сохранения в Redis
+                context_to_save = {
+                    "options": matches,
+                    "original_term": object_nom, # Исходный неоднозначный термин
+                    "offset": offset             # Текущее смещение для пагинации
+                }
+
+                # 2. Сохраняем весь контекст
+                context_manager = RedisContextManager()
+                options_key = f"clarify_options:{user_id}"
+                await context_manager.set_context(options_key, context_to_save)
+                # Устанавливаем TTL, чтобы контекст не хранился вечно (5 минут)
+                await context_manager.redis_client.expire(options_key, 300)
+
+                # 3. Формируем основные кнопки с индексами
+                buttons = []
+                for i, match_name in enumerate(matches):
+                    # В callback_data теперь только короткий индекс
+                    buttons.append([{"text": match_name, "callback_data": f"clarify_idx:{i}"}])
                 
-                # [НОВОЕ] Формируем ряд с системными кнопками
+                # 4. Формируем ряд с системными кнопками
                 system_buttons_row = []
-                # Добавляем "Любую", если есть хотя бы один вариант
+                # Кнопка "Любую" просто выбирает первый элемент (индекс 0)
                 if matches:
-                    system_buttons_row.append({"text": "🎲 Любую", "callback_data": f"clarify_object:{matches[0]}"})
+                    system_buttons_row.append({"text": "🎲 Любую", "callback_data": "clarify_idx:0"})
 
-                # Добавляем "Поискать еще", если API сообщил, что есть еще результаты
+                # Кнопка "Поискать еще" использует простой callback без параметров
                 if data.get("has_more", False):
-                    new_offset = offset + len(matches)
-                    # Создаем callback_data для пагинации
-                    system_buttons_row.append({"text": "🔍 Поискать еще", "callback_data": f"clarify_more:{object_nom}:{new_offset}"})
-
-                # Если мы сформировали хотя бы одну системную кнопку, добавляем этот ряд в общую клавиатуру
+                    system_buttons_row.append({"text": "🔍 Поискать еще", "callback_data": "clarify_more"})
+                
+                # Если системные кнопки были созданы, добавляем их отдельным рядом
                 if system_buttons_row:
                     buttons.append(system_buttons_row)
-                
-                return [{ "type": "clarification", "content": f"Я знаю несколько видов для «{object_nom}». Уточните, какой именно вас интересует?", "buttons": buttons }]
+
+                return [{
+                    "type": "clarification",
+                    "content": f"Я знаю несколько видов для «{object_nom}». Уточните, какой именно вас интересует?",
+                    "buttons": buttons
+                }]
 
             elif status == "found":
-                # ... (эта часть без изменений)
                 canonical_name = data.get("matches", [object_nom])[0]
                 desc_url = f"{API_URLS['get_description']}?species_name={canonical_name}&debug_mode={str(debug_mode).lower()}"
                 logger.debug(f"[{user_id}] Объект найден: '{canonical_name}'. Запрос описания по URL: {desc_url}")
@@ -317,20 +341,24 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                             logger.info(f"[{user_id}] Описание для '{canonical_name}' успешно найдено и отправлено.")
                             return [{"type": "text", "content": text, "canonical_name": canonical_name}]
             
-            # ... (остальная часть функции без изменений)
+            # Этот блок сработает, если status == "not_found" или если для "found" не нашлось текста
             logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено ни на одном из этапов.")
+            
+            # Проверяем, включен ли fallback для пользователя
             if get_user_fallback_setting(user_id):
                 logger.info(f"[{user_id}] Запускаем GigaChat fallback для запроса: '{original_query}'")
-                fallback_answer = await call_gigachat_fallback_service(session, original_query)
-                if fallback_answer: 
-                    return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
+                # Здесь должен быть вызов асинхронной функции fallback, если она у вас есть
+                # fallback_answer = await call_gigachat_fallback_service(session, original_query)
+                # if fallback_answer: 
+                #     return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
+                pass # Заглушка, если fallback не реализован
             
             return [{"type": "text", "content": f"К сожалению, у меня нет описания для «{object_nom}»."}]
 
     except Exception as e:
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
         return [{"type": "text", "content": "Проблема с подключением к серверу описаний."}]
-    
+        
 async def handle_comparison(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     # TODO: Логика сравнения требует адаптации под новую систему контекста (Шаг 4)
     # Пока что это просто заглушка

@@ -14,7 +14,9 @@ from utils.bot_utils import send_long_message
 from utils.context_manager import RedisContextManager
 from config import API_URLS
 
+unhandled_logger = logging.getLogger("unhandled")
 logger = logging.getLogger(__name__)
+
 
 # Типизация для наших словарей-диспетчеров, чтобы код был понятнее
 ActionHandler = Callable[[Dict[str, Any], str, str], Awaitable[list]]
@@ -42,14 +44,17 @@ class GigaChatHandler:
         # --- ДИСПЕТЧЕР ДЛЯ ОБРАБОТКИ КНОПОК ---
         # Ключ: префикс callback_data. Значение: приватный метод этого класса.
         self.callback_handlers: Dict[str, CallbackHandler] = {
-            "clarify_object": self._handle_clarify_object,
+            "clarify_idx": self._handle_clarify_by_index,
             "clarify_more": self._handle_pagination,
             "explore": self._handle_exploration,
             "fallback": self._handle_fallback,
         }
 
     async def process_message(self, message: types.Message):
-        """Главный обработчик текстовых сообщений. Анализирует, обогащает и диспетчеризует."""
+        """
+        Главный обработчик текстовых сообщений. Анализирует, обогащает и диспетчеризует.
+        Теперь включает улучшенную логику fallback.
+        """
         user_id, query = str(message.chat.id), message.text
         
         try:
@@ -63,26 +68,41 @@ class GigaChatHandler:
             final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis)
             action = final_analysis.get("action")
 
-            if not action or action == "unknown":
-                await self._reply_with_error(message, f"Итоговый action='unknown'. Анализ: {final_analysis}", reply_text="Пожалуйста, уточните ваш запрос.")
-                return
+            handler = None # Инициализируем обработчик как None
+            if action and action != "unknown":
+                primary_entity_type = final_analysis.get("primary_entity", {}).get("type", "ANY")
+                handler = self.action_handlers.get((action, primary_entity_type))
+                if not handler:
+                    if action == "count_items" and primary_entity_type == "Infrastructure":
+                        handler = handle_geo_request
+                    else:
+                        handler = self.action_handlers.get((action, "ANY"))
 
-            logger.info(f"[{user_id}] Роутинг для анализа: {final_analysis}")
-            
-            primary_entity_type = final_analysis.get("primary_entity", {}).get("type", "ANY")
-            handler = self.action_handlers.get((action, primary_entity_type))
-            
-            # [ИЗМЕНЕНИЕ] - Добавляем обработку count_items, привязывая ее к существующему хэндлеру
+            # --- НОВАЯ ЕДИНАЯ ЛОГИКА FALLBACK ---
+            # Срабатывает, если action="unknown" или для action не нашлось обработчика
             if not handler:
-                if action == "count_items" and primary_entity_type == "Infrastructure":
-                    handler = handle_geo_request
-                else:
-                    handler = self.action_handlers.get((action, "ANY"))
+                # 1. Логируем нераспознанный запрос в наш специальный файл
+                unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\"")
+                
+                # 2. Формируем полезный ответ с кнопкой-триггером
+                fallback_keyboard = types.InlineKeyboardMarkup()
+                fallback_keyboard.add(
+                    types.InlineKeyboardButton(
+                        text="💡 Начать поиск с подсказками",
+                        switch_inline_query_current_chat=""
+                    )
+                )
+                
+                await message.answer(
+                    "К сожалению, я не смог распознать ваш запрос. "
+                    "Попробуйте использовать быстрый поиск с автодополнением, чтобы найти то, что вам нужно.",
+                    reply_markup=fallback_keyboard
+                )
+                return # Завершаем выполнение
 
-            if not handler:
-                await self._reply_with_error(message, f"Для анализа {final_analysis} не найдено обработчика.", reply_text="Извините, я пока не умею обрабатывать такие запросы.")
-                return
+            # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
+            # Если мы дошли до сюда, значит, хендлер найден. Продолжаем как обычно.
             logger.debug(f"[{user_id}] Диспетчер вызвал обработчик: {handler.__name__}")
 
             all_possible_args = {
@@ -103,7 +123,7 @@ class GigaChatHandler:
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в GigaChatHandler.process_message: {e}", exc_info=True)
             await message.answer("Ой, что-то пошло не так на моей стороне.")
-            
+
     async def process_callback(self, callback_query: types.CallbackQuery):
         """Главный обработчик кнопок. Находит нужный обработчик и передает ему управление."""
         user_id, data = str(callback_query.from_user.id), callback_query.data
@@ -165,27 +185,53 @@ class GigaChatHandler:
 
     # --- Приватные обработчики для кнопок ---
 
-    async def _handle_clarify_object(self, cq: types.CallbackQuery):
-        await cq.message.edit_reply_markup(reply_markup=None)
-        selected_object = cq.data.split(':', 1)[1]
-        simulated_analysis = {"action": "describe", "primary_entity": {"name": selected_object, "type": "Biological"}}
-        await self.dialogue_manager.update_history(cq.from_user.id, simulated_analysis)
-        responses = await handle_get_description(self.session, simulated_analysis, cq.from_user.id, f"Уточнение: {selected_object}", False)
-        await self._send_responses(cq.message, responses)
-        await cq.answer()
-
     async def _handle_pagination(self, cq: types.CallbackQuery):
+        """Обрабатывает кнопку "Поискать еще", получая данные из Redis."""
         await cq.answer("Ищу дальше...")
-        _, ambiguous_term, offset_str = cq.data.split(':', 2)
-        simulated_analysis = {"action": "describe", "primary_entity": {"name": ambiguous_term, "type": "Biological"}, "offset": int(offset_str)}
-        responses = await handle_get_description(self.session, simulated_analysis, cq.from_user.id, f"Пагинация: {ambiguous_term}", False)
-        # Для пагинации мы всегда должны редактировать сообщение
-        for resp_data in responses:
-            if resp_data.get("type") == "clarification":
-                kb = self._build_keyboard(resp_data.get("buttons"))
-                await cq.message.edit_text(resp_data["content"], reply_markup=kb)
-            else:
-                await cq.message.edit_text(resp_data.get("content", "Больше ничего не найдено."), reply_markup=None)
+        user_id = str(cq.from_user.id)
+
+        # 1. Получаем контекст из Redis
+        context_manager = RedisContextManager()
+        options_key = f"clarify_options:{user_id}"
+        context_data = await context_manager.get_context(options_key)
+
+        if not context_data:
+            await cq.message.edit_text("Извините, этот поиск уже неактуален. Пожалуйста, повторите ваш запрос.")
+            return
+
+        # 2. Извлекаем необходимые данные
+        ambiguous_term = context_data.get("original_term")
+        current_offset = context_data.get("offset", 0)
+        options_count = len(context_data.get("options", []))
+        
+        if not ambiguous_term:
+            await cq.message.edit_text("Произошла ошибка: не удалось найти исходный запрос для продолжения поиска.")
+            return
+            
+        # 3. Рассчитываем новое смещение и создаем анализ
+        new_offset = current_offset + options_count
+        simulated_analysis = {
+            "action": "describe",
+            "primary_entity": {"name": ambiguous_term, "type": "Biological"},
+            "offset": new_offset
+        }
+        
+        # 4. Вызываем handle_get_description с новым смещением
+        # Этот вызов вернет НОВОЕ сообщение с новыми кнопками
+        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Пагинация: {ambiguous_term}", False)
+        
+        # 5. Редактируем исходное сообщение, чтобы отправить новый ответ
+        # Важно! Мы ожидаем, что responses вернет только один элемент типа clarification
+        if responses and responses[0].get("type") == "clarification":
+            resp_data = responses[0]
+            kb = self._build_keyboard(resp_data.get("buttons"))
+            await cq.message.edit_text(resp_data["content"], reply_markup=kb)
+        else:
+            # Если что-то пошло не так (например, больше ничего не найдено), просто обновляем текст
+            final_text = "Больше ничего не найдено."
+            if responses and responses[0].get("content"):
+                final_text = responses[0].get("content")
+            await cq.message.edit_text(final_text, reply_markup=None)
 
     async def _handle_exploration(self, cq: types.CallbackQuery):
         await cq.message.edit_reply_markup(reply_markup=None)
@@ -262,3 +308,41 @@ class GigaChatHandler:
 
         # 6. Отправляем результат
         await self._send_responses(cq.message, responses)
+    
+    
+    async def _handle_clarify_by_index(self, cq: types.CallbackQuery):
+        """Обрабатывает выбор уточнения по индексу из списка в Redis."""
+        await cq.message.edit_reply_markup(reply_markup=None)
+        user_id = str(cq.from_user.id)
+        
+        try:
+            selected_index = int(cq.data.split(':', 1)[1])
+        except (ValueError, IndexError):
+            await cq.answer("Ошибка в данных кнопки.", show_alert=True)
+            return
+
+        # 1. Достаем список вариантов из Redis
+        context_manager = RedisContextManager()
+        options_key = f"clarify_options:{user_id}"
+        context_data = await context_manager.get_context(options_key)
+        options = context_data.get("options", [])
+
+        if not options or selected_index >= len(options):
+            await cq.message.answer("Извините, этот выбор уже неактуален. Пожалуйста, повторите ваш запрос.")
+            await cq.answer()
+            return
+            
+        # 2. Получаем выбранное полное имя по индексу
+        selected_object = options[selected_index]
+        await cq.answer(f"Выбрано: {selected_object}")
+
+        # 3. "Симулируем" новый анализ и передаем в обработчик
+        simulated_analysis = {"action": "describe", "primary_entity": {"name": selected_object, "type": "Biological"}}
+        await self.dialogue_manager.update_history(user_id, simulated_analysis)
+        
+        # Вызываем handle_get_description снова, но уже с однозначным именем
+        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Уточнение: {selected_object}", False)
+        await self._send_responses(cq.message, responses)
+        
+        # 4. Очищаем временные данные из Redis
+        await context_manager.delete_context(options_key)

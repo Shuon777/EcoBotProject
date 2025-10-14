@@ -1,3 +1,4 @@
+
 import logging
 from typing import Dict, Any, Optional
 from copy import deepcopy
@@ -15,8 +16,30 @@ class DialogueManager:
     ) -> Dict[str, Any]:
         """
         Обогащает текущий анализ данными из истории диалога.
-        Это ключевая функция для обработки уточняющих запросов.
         """
+        # --- НАЧАЛО НОВОЙ ЛОГИКИ ---
+
+        # ПРОВЕРКА №1: Смена темы (полностью пустой 'unknown')
+        is_topic_change = (
+            current_analysis.get("action") == "unknown" and
+            not current_analysis.get("primary_entity") and
+            not current_analysis.get("secondary_entity") and
+            not current_analysis.get("attributes", {}) 
+        )
+        if is_topic_change:
+            logger.debug(f"[{user_id}] Обнаружена смена темы. Контекст не применяется.")
+            return current_analysis
+
+        # ПРОВЕРКА №2: Новый полноценный запрос (с явным действием и сущностью)
+        # В этом случае контекст тоже не нужен.
+        if current_analysis.get("action") != "unknown" and current_analysis.get("primary_entity"):
+             logger.debug(f"[{user_id}] Обнаружен новый полноценный запрос. Контекст не применяется.")
+             return current_analysis
+
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
+        # Если мы дошли до сюда, значит, это УТОЧНЕНИЕ, и мы должны применить контекст.
+        
         if not self.context_manager.redis_client:
             return current_analysis
 
@@ -25,50 +48,47 @@ class DialogueManager:
         last_analysis = history[0] if history else {}
         
         if not last_analysis:
-            logger.debug(f"[{user_id}] Контекст пуст, обогащение не требуется.")
             return current_analysis
 
-        # Полностью переписана логика обогащения
-        logger.debug(f"[{user_id}] НАЧАЛО ОБОГАЩЕНИЯ. Текущий анализ: {current_analysis}")
+        logger.debug(f"[{user_id}] НАЧАЛО ОБОГАЩЕНИЯ (уточняющий запрос). Текущий анализ: {current_analysis}")
         logger.debug(f"[{user_id}] Контекст: {last_analysis}")
 
-        # Начинаем с глубокой копии последнего контекста, это наша основа
-        final_analysis = deepcopy(last_analysis)
-
-        # 1. Обновляем действие (action), если в новом запросе оно осмысленное
-        current_action = current_analysis.get("action")
-        if current_action and current_action != "unknown":
-            final_analysis["action"] = current_action
-            logger.debug(f"[{user_id}] Обновили `action` на '{current_action}' из нового запроса.")
-
-        # 2. Обновляем primary_entity, если в новом запросе оно есть
-        current_primary_entity = current_analysis.get("primary_entity")
-        if current_primary_entity and current_primary_entity.get("name"):
-            final_analysis["primary_entity"] = current_primary_entity
-            logger.debug(f"[{user_id}] Обновили `primary_entity` на '{current_primary_entity}' из нового запроса.")
+        # --- НАЧАЛО ЛОГИКИ "УМНОГО" ОБОГАЩЕНИЯ ---
         
-        # 3. Обновляем secondary_entity, если в новом запросе оно есть
-        current_secondary_entity = current_analysis.get("secondary_entity")
-        if current_secondary_entity and current_secondary_entity.get("name"):
-            final_analysis["secondary_entity"] = current_secondary_entity
-            logger.debug(f"[{user_id}] Обновили `secondary_entity` на '{current_secondary_entity}' из нового запроса.")
-
-        # 4. ОБЪЕДИНЯЕМ АТРИБУТЫ: новые атрибуты перезаписывают старые
-        current_attributes = current_analysis.get("attributes", {})
-        if current_attributes:
-            if "attributes" not in final_analysis:
-                final_analysis["attributes"] = {}
-            final_analysis["attributes"].update(current_attributes)
-            logger.debug(f"[{user_id}] Объединили атрибуты. Результат: {final_analysis['attributes']}")
+        # Начинаем с копии старого контекста
+        final_analysis = deepcopy(last_analysis)
+        
+        # Если пришла новая primary_entity, она заменяет старую, но action и атрибуты остаются!
+        if current_analysis.get("primary_entity"):
+            final_analysis["primary_entity"] = current_analysis["primary_entity"]
+            # ВАЖНО: При смене основной сущности, старые атрибуты и secondary_entity,
+            # относящиеся к прошлой, должны быть сброшены.
+            final_analysis["attributes"] = current_analysis.get("attributes", {})
+            final_analysis["secondary_entity"] = current_analysis.get("secondary_entity")
+            logger.debug(f"[{user_id}] Сменили primary_entity. Атрибуты и secondary_entity сброшены.")
+        else:
+            # Если новой primary_entity нет, то просто объединяем атрибуты и secondary_entity
+            final_analysis.get("attributes", {}).update(current_analysis.get("attributes", {}))
+            if current_analysis.get("secondary_entity"):
+                final_analysis["secondary_entity"] = current_analysis.get("secondary_entity")
+        
+        # Явный action из нового запроса всегда имеет приоритет
+        if current_analysis.get("action") != "unknown":
+            final_analysis["action"] = current_analysis["action"]
+            
+        # --- КОНЕЦ ЛОГИКИ "УМНОГО" ОБОГАЩЕНИЯ ---
 
         logger.info(f"[{user_id}] ИТОГ ОБОГАЩЕНИЯ: {final_analysis}")
         return final_analysis
-
+    
     async def update_history(self, user_id: str, final_analysis: Dict[str, Any]):
-        """
-        Сохраняет последний успешный анализ в историю пользователя.
-        """
+        # ... (этот метод остается без изменений)
         primary_entity = final_analysis.get("primary_entity")
+        # --- ИСПРАВЛЕНИЕ: Не сохраняем в историю "пустые" unknown запросы ---
+        if final_analysis.get("action") == "unknown" and (not primary_entity or not primary_entity.get("name")):
+             logger.debug(f"[{user_id}] Пропуск сохранения нецелевого запроса в историю.")
+             return
+
         if not primary_entity or not primary_entity.get("name"):
             logger.debug(f"[{user_id}] Пропуск сохранения в историю: в анализе нет `primary_entity`.")
             return
