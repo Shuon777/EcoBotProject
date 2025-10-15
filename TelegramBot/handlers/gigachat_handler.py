@@ -8,7 +8,7 @@ from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from logic.api_handlers import (
     handle_get_description, handle_get_picture, handle_draw_locate_map,
-    handle_nearest, handle_objects_in_polygon, handle_geo_request, handle_comparison
+    handle_nearest, handle_objects_in_polygon, handle_geo_request, handle_draw_map_of_infrastructure
 )
 from utils.bot_utils import send_long_message
 from utils.context_manager import RedisContextManager
@@ -36,6 +36,7 @@ class GigaChatHandler:
             ("describe", "GeoPlace"): handle_geo_request,
             ("show_image", "Biological"): handle_get_picture,
             ("show_map", "Biological"): handle_draw_locate_map,
+            ("show_map", "Infrastructure"): handle_draw_map_of_infrastructure,
             ("find_nearby", "ANY"): handle_nearest, # ANY - для случаев, где тип не важен
             ("list_items", "Biological"): handle_objects_in_polygon,
             ("list_items", "Infrastructure"): handle_geo_request,

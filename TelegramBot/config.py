@@ -35,11 +35,9 @@ API_URLS = {
     "coords_to_map": f"{ECOBOT_API_BASE_URL}/api/coords_to_map",
     "objects_in_polygon": f"{ECOBOT_API_BASE_URL}/api/objects_in_polygon_simply",
     "ask_ecobot": f"{ECOBOT_API_BASE_URL}/api/ask",
-    "is_known_object": f"{ECOBOT_API_BASE_URL}/api/is_known_object",
-    "get_species_area": f"{ECOBOT_API_BASE_URL}/api/get_species_area",
-    "draw_multiple_places": f"{ECOBOT_API_BASE_URL}/api/draw_multiple_places",
     "find_species_with_description": f"{ECOBOT_API_BASE_URL}/api/find_species_with_description",
-    "find_geo_special_description": f"{ECOBOT_API_BASE_URL}/object/description/"
+    "find_geo_special_description": f"{ECOBOT_API_BASE_URL}/object/description/",
+    "show_map_infrastructure": f"{ECOBOT_API_BASE_URL}/objects_in_area_by_type"
 }
 
 # --- Таймауты ---

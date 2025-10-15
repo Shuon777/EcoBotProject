@@ -7,38 +7,61 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 async def send_long_message(message: types.Message, text: str, parse_mode: str = None, reply_markup=None):
     """
-    Отправляет длинное сообщение, разбивая его на части.
+    Отправляет длинное сообщение, "красиво" разбивая его на части.
+    Старается не разрывать слова и строки.
     Клавиатура (reply_markup) прикрепляется к последнему сообщению.
     """
-    if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
-        await message.answer(text, parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
+    # Проверка на пустой текст остается
+    if not text or not text.strip():
+        logger.warning(f"Попытка отправить пустое сообщение для чата {message.chat.id}. Отправка отменена.")
         return
 
-    parts = text.split('\n')
-    current_message = ""
-    total_parts = len(parts)
-    
-    # Разделяем текст на сообщения, не превышающие лимит
     message_chunks = []
-    for part in parts:
-        if len(current_message) + len(part) + 1 > TELEGRAM_MAX_MESSAGE_LENGTH:
-            message_chunks.append(current_message)
-            current_message = part
-        else:
-            if current_message:
-                current_message += "\n"
-            current_message += part
-    if current_message:
-        message_chunks.append(current_message)
+    
+    # ---> [НАЧАЛО НОВОЙ "УМНОЙ" ЛОГИКИ РАЗБИЕНИЯ]
+    while len(text) > 0:
+        if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+            message_chunks.append(text)
+            break
 
+        # Берем срез текста, не превышающий лимит
+        chunk = text[:TELEGRAM_MAX_MESSAGE_LENGTH]
+        
+        # Ищем лучшую точку для разрыва, двигаясь от конца среза к началу
+        split_pos = -1
+
+        # 1. Предпочитаем разрыв по переносу строки
+        possible_split = chunk.rfind('\n')
+        if possible_split != -1:
+            split_pos = possible_split
+        
+        # 2. Если нет переноса, ищем последний пробел
+        else:
+            possible_split = chunk.rfind(' ')
+            if possible_split != -1:
+                split_pos = possible_split
+
+        # 3. Если не найдено ни переносов, ни пробелов (очень длинное слово),
+        # то вынужденно режем по лимиту.
+        if split_pos == -1:
+            split_pos = TELEGRAM_MAX_MESSAGE_LENGTH
+        
+        # Добавляем кусок в список и готовим оставшийся текст для следующей итерации
+        message_chunks.append(text[:split_pos])
+        text = text[split_pos:].lstrip() # .lstrip() убирает пробелы/переносы в начале следующего куска
+
+    # ---> [КОНЕЦ НОВОЙ ЛОГИКИ]
+
+    # Отправка сообщений остается прежней
     # Отправляем все части, кроме последней
     for i in range(len(message_chunks) - 1):
-        await message.answer(message_chunks[i], parse_mode=parse_mode, disable_web_page_preview=True)
+        if message_chunks[i]:
+            await message.answer(message_chunks[i], parse_mode=parse_mode, disable_web_page_preview=True)
     
-    # Отправляем последнюю часть с клавиатурой
-    if message_chunks:
+    # Отправляем последнюю часть с клавиатурой (если она есть)
+    if message_chunks and message_chunks[-1]:
         await message.answer(message_chunks[-1], parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
-
+                        
 
 def normalize_message(msg: dict) -> dict:
     """

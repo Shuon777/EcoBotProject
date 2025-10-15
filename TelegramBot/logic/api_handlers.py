@@ -386,10 +386,73 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
             messages.append({"type": "text", "content": text})
 
         if map_data.get("interactive_map") and map_data.get("static_map"):
+            s = map_data["static_map"]
+            i = map_data["interactive_map"]
+            logger.info(f"static_map - {s} and interactive_map - {i}")
             messages.append({"type": "map", "static": map_data["static_map"], "interactive": map_data["interactive_map"], "caption": caption})
         elif caption:
             messages.append({"type": "text", "content": caption})
         return messages
+
+async def _get_infrastructure_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, object_type: str, area_name: str, debug_mode: bool) -> list:
+    """Специализированная функция для получения карт инфраструктуры"""
+    try:
+        full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
+        logger.info(f"Запрос к API инфраструктуры: {full_url} с payload: {payload}")
+        
+        async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+            # Проверяем Content-Type
+            content_type = resp.headers.get('Content-Type', '').lower()
+            
+            if 'application/json' not in content_type:
+                response_text = await resp.text()
+                logger.error(f"API инфраструктуры вернул не JSON. Content-Type: {content_type}, Status: {resp.status}")
+                logger.error(f"Response preview: {response_text[:500]}")
+                
+                if not resp.ok:
+                    return [{"type": "text", "content": f"Ошибка сервера инфраструктуры: {resp.status}"}]
+                else:
+                    return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный формат данных."}]
+
+            # Парсим JSON
+            data = await resp.json()
+            
+            if not resp.ok:
+                error_msg = data.get('error', 'Неизвестная ошибка API инфраструктуры')
+                logger.error(f"API инфраструктуры вернул ошибку {resp.status}: {error_msg}")
+                return [{"type": "text", "content": f"Ошибка при поиске {object_type}: {error_msg}"}]
+
+            # Обрабатываем успешный ответ в ЕДИНОМ СТИЛЕ с другими map-обработчиками
+            if data.get("static_map") and data.get("interactive_map"):
+                s = data["static_map"]
+                i = data["interactive_map"]
+                logger.info(f"static_map - {s} and interactive_map - {i}")
+                caption = data.get("answer", f"📍 Найдены {object_type} в {area_name}")
+                
+                # ВОТ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ - возвращаем в том же формате, что и _get_map_from_api
+                return [{
+                    "type": "map", 
+                    "static": data["static_map"], 
+                    "interactive": data["interactive_map"], 
+                    "caption": caption
+                    # Кнопка будет создана автоматически в _send_responses
+                }]
+            else:
+                # Если карт нет, но есть текстовый ответ
+                text_response = data.get("answer", f"{object_type} в {area_name} не найдены")
+                if data.get("objects"):
+                    objects_list = [obj["name"] for obj in data["objects"] if "name" in obj]
+                    if objects_list:
+                        text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
+                
+                return [{"type": "text", "content": text_response}]
+
+    except asyncio.TimeoutError:
+        logger.error(f"Таймаут при запросе к API инфраструктуры: {url}")
+        return [{"type": "text", "content": "Превышено время ожидания ответа от сервера инфраструктуры."}]
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка в _get_infrastructure_map_from_api: {e}", exc_info=True)
+        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов инфраструктуры."}]
     
 async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     # [НОВОЕ] Извлекаем данные из `analysis`
@@ -417,6 +480,79 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
     payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom, "object_type": "geographical_entity"}
     return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
 
+async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+    """Обрабатывает запросы на отображение инфраструктуры на карте"""
+    object_type = analysis.get("primary_entity", {}).get("name")
+    area_name = analysis.get("secondary_entity", {}).get("name")
+    object_type = normalize_entity_name(object_type)
+    logger.info(f"Запрос карты инфраструктуры: object_type='{object_type}', area_name='{area_name}'")
+
+    if not object_type or not area_name: 
+        return [{"type": "text", "content": "К сожалению, я не смог выделить тип объекта или место для поиска."}]
+
+    try:
+        url = f"{API_URLS['show_map_infrastructure']}?debug_mode={str(debug_mode).lower()}"
+        payload = {
+            "area_name": area_name, 
+            "object_type": object_type, 
+            "limit": 10
+        }
+        
+        logger.info(f"Запрос к API инфраструктуры: {url} с payload: {payload}")
+        
+        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+            # Безопасная проверка Content-Type
+            content_type = resp.headers.get('Content-Type', '').lower()
+            
+            if 'application/json' not in content_type:
+                text_response = await resp.text()
+                logger.error(f"API инфраструктуры вернул не JSON. Status: {resp.status}, Content-Type: {content_type}")
+                
+                if resp.status == 404:
+                    return [{"type": "text", "content": f"Сервис поиска {object_type} временно недоступен."}]
+                elif resp.status == 500:
+                    return [{"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."}]
+                else:
+                    return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."}]
+
+            # Если это JSON, парсим
+            data = await resp.json()
+            
+            if not resp.ok:
+                error_msg = data.get('error', f'Ошибка {resp.status}')
+                logger.error(f"API инфраструктуры вернул ошибку: {error_msg}")
+                return [{"type": "text", "content": f"Не удалось найти {object_type} в {area_name}: {error_msg}"}]
+
+            # Успешный ответ - формируем в том же стиле, что и другие map-ответы
+            if data.get("static_map") and data.get("interactive_map"):
+                caption = data.get("answer", f"📍 Найдены {object_type} в {area_name}")
+                s = data["static_map"]
+                i = data["interactive_map"]
+                logger.info(f"static_map - {s} and interactive_map - {i}")
+                # Формируем ответ в том же формате, что используется в _send_responses для типа "map"
+                return [{
+                    "type": "map", 
+                    "static": s, 
+                    "interactive": i, 
+                    "caption": caption
+                }]
+            else:
+                # Fallback - текстовый ответ
+                text_response = data.get("answer", f"{object_type} в {area_name} не найдены")
+                if data.get("objects"):
+                    objects_list = [obj["name"] for obj in data["objects"] if "name" in obj]
+                    if objects_list:
+                        text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
+                
+                return [{"type": "text", "content": text_response}]
+
+    except asyncio.TimeoutError:
+        logger.error(f"Таймаут при запросе к API инфраструктуры")
+        return [{"type": "text", "content": "Сервер инфраструктуры не отвежает. Попробуйте позже."}]
+    except Exception as e:
+        logger.error(f"Критическая ошибка в handle_draw_map_of_infrastructure: {e}", exc_info=True)
+        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."}]
+        
 async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     if not geo_nom:
@@ -479,18 +615,17 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
         return [{"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."}]
     
 async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
-    # [КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ] Добавляем `or {}` для защиты от None
     primary_entity = analysis.get("primary_entity") or {}
     secondary_entity = analysis.get("secondary_entity") or {}
 
-    location_name = secondary_entity.get("name")
+    location_name = secondary_entity.get("name", "")
     if not location_name and primary_entity.get("type") == "GeoPlace":
-        location_name = primary_entity.get("name")
+        location_name = primary_entity.get("name", "")
     
     raw_entity_name = primary_entity.get("name")
     canonical_entity_name = normalize_entity_name(raw_entity_name)
     
-    if canonical_entity_name is None:
+    if not canonical_entity_name:
         geo_type_payload = {"primary_type": [], "specific_types": []}
     else:
         geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
@@ -510,13 +645,77 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()
-            answer = data.get("gigachat_answer") or data.get("error", "Не удалось найти информацию.")
-            return [{"type": "text", "content": answer}]
+            logger.debug(f"Получен полный ответ от API: {data}")
+
+            # 1. Проверяем приоритетный ответ от GigaChat
+            gigachat_answer = data.get("gigachat_answer")
+            if gigachat_answer and gigachat_answer.strip():
+                logger.info("Используем ответ от GigaChat.")
+                return [{"type": "text", "content": gigachat_answer.strip()}]
+
+            # 2. Если его нет, обрабатываем descriptions
+            api_message = data.get("message")
+            if api_message:
+                logger.info(f"Сообщение от API: '{api_message}'")
+
+            descriptions = data.get("descriptions")
+            if descriptions and isinstance(descriptions, list):
+                logger.info("Ответ GigaChat отсутствует. Ищем первое валидное описание и список заголовков.")
+                
+                # ---> [НАЧАЛО НОВОЙ ЛОГИКИ]
+                
+                responses_to_send = []
+                first_valid_index = -1
+
+                # Шаг 1: Найти контент первого валидного описания и его индекс
+                for i, desc in enumerate(descriptions):
+                    content = desc.get("content")
+                    if content and content.strip():
+                        responses_to_send.append({"type": "text", "content": content.strip()})
+                        first_valid_index = i
+                        logger.info(f"Найдено первое валидное описание с индексом {i}.")
+                        break # Прерываем цикл, как только нашли первое
+                
+                # Если мы нашли хотя бы одно описание
+                if first_valid_index != -1:
+                    # Шаг 2: Собрать до 10 заголовков из ОСТАЛЬНЫХ описаний
+                    remaining_titles = []
+                    # Начинаем со следующего элемента после найденного
+                    for desc in descriptions[first_valid_index + 1:]:
+                        title = desc.get("title")
+                        if title and title.strip():
+                            remaining_titles.append(title.strip())
+                        # Прекращаем, как только набрали 10 заголовков
+                        if len(remaining_titles) >= 10:
+                            break
+                    
+                    # Шаг 3: Если есть заголовки, сформировать из них второе сообщение
+                    if remaining_titles:
+                        # Форматируем список заголовков в красивую строку
+                        title_list_str = "\n".join(f"• {title}" for title in remaining_titles)
+                        full_title_message = f"Также могут быть интересны:\n{title_list_str}"
+                        
+                        responses_to_send.append({"type": "text", "content": full_title_message})
+                        logger.info(f"Сформировано второе сообщение с {len(remaining_titles)} заголовками.")
+
+                    return responses_to_send
+
+                # Если цикл завершился, а мы ничего не нашли
+                logger.warning("`descriptions` найден, но не содержит ни одного элемента с валидным контентом.")
+                # ---> [КОНЕЦ НОВОЙ ЛОГИКИ]
+
+            # 3. Fallback: если нет ни GigaChat, ни валидных descriptions
+            final_message = api_message or "К сожалению, по вашему запросу ничего не найдено."
+            if not final_message.strip():
+                final_message = "К сожалению, по вашему запросу ничего не найдено."
             
+            logger.warning(f"В ответе API нет валидного контента. Возвращаем fallback-сообщение: '{final_message}'")
+            return [{"type": "text", "content": final_message}]
+
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
-     
+               
 async def _update_geo_context(user_id: str, result: dict, original_query: str):
     """Сохраняет географические сущности в контекст пользователя"""
     try:
