@@ -6,11 +6,11 @@ import logging
 import base64
 import json
 from typing import Dict, Any, List
-
+from urllib.parse import quote
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
-from logic.entity_normalizer import normalize_entity_name
+from logic.entity_normalizer_for_maps import normalize_entity_name, ENTITY_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -393,66 +393,6 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
         elif caption:
             messages.append({"type": "text", "content": caption})
         return messages
-
-async def _get_infrastructure_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, object_type: str, area_name: str, debug_mode: bool) -> list:
-    """Специализированная функция для получения карт инфраструктуры"""
-    try:
-        full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
-        logger.info(f"Запрос к API инфраструктуры: {full_url} с payload: {payload}")
-        
-        async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            # Проверяем Content-Type
-            content_type = resp.headers.get('Content-Type', '').lower()
-            
-            if 'application/json' not in content_type:
-                response_text = await resp.text()
-                logger.error(f"API инфраструктуры вернул не JSON. Content-Type: {content_type}, Status: {resp.status}")
-                logger.error(f"Response preview: {response_text[:500]}")
-                
-                if not resp.ok:
-                    return [{"type": "text", "content": f"Ошибка сервера инфраструктуры: {resp.status}"}]
-                else:
-                    return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный формат данных."}]
-
-            # Парсим JSON
-            data = await resp.json()
-            
-            if not resp.ok:
-                error_msg = data.get('error', 'Неизвестная ошибка API инфраструктуры')
-                logger.error(f"API инфраструктуры вернул ошибку {resp.status}: {error_msg}")
-                return [{"type": "text", "content": f"Ошибка при поиске {object_type}: {error_msg}"}]
-
-            # Обрабатываем успешный ответ в ЕДИНОМ СТИЛЕ с другими map-обработчиками
-            if data.get("static_map") and data.get("interactive_map"):
-                s = data["static_map"]
-                i = data["interactive_map"]
-                logger.info(f"static_map - {s} and interactive_map - {i}")
-                caption = data.get("answer", f"📍 Найдены {object_type} в {area_name}")
-                
-                # ВОТ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ - возвращаем в том же формате, что и _get_map_from_api
-                return [{
-                    "type": "map", 
-                    "static": data["static_map"], 
-                    "interactive": data["interactive_map"], 
-                    "caption": caption
-                    # Кнопка будет создана автоматически в _send_responses
-                }]
-            else:
-                # Если карт нет, но есть текстовый ответ
-                text_response = data.get("answer", f"{object_type} в {area_name} не найдены")
-                if data.get("objects"):
-                    objects_list = [obj["name"] for obj in data["objects"] if "name" in obj]
-                    if objects_list:
-                        text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
-                
-                return [{"type": "text", "content": text_response}]
-
-    except asyncio.TimeoutError:
-        logger.error(f"Таймаут при запросе к API инфраструктуры: {url}")
-        return [{"type": "text", "content": "Превышено время ожидания ответа от сервера инфраструктуры."}]
-    except Exception as e:
-        logger.error(f"Непредвиденная ошибка в _get_infrastructure_map_from_api: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов инфраструктуры."}]
     
 async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     # [НОВОЕ] Извлекаем данные из `analysis`
@@ -481,78 +421,89 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
     return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
 
 async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
-    """Обрабатывает запросы на отображение инфраструктуры на карте"""
-    object_type = analysis.get("primary_entity", {}).get("name")
-    area_name = analysis.get("secondary_entity", {}).get("name")
-    object_type = normalize_entity_name(object_type)
-    logger.info(f"Запрос карты инфраструктуры: object_type='{object_type}', area_name='{area_name}'")
+    """Обрабатывает запросы на отображение инфраструктуры на карте, различая поиск по типу и по имени."""
+    
+    # --- НАЧАЛО НОВОГО, ИСПРАВЛЕННОГО БЛОКА ---
+    
+    primary_entity = analysis.get("primary_entity") or {}
+    secondary_entity = analysis.get("secondary_entity") or {}
 
-    if not object_type or not area_name: 
-        return [{"type": "text", "content": "К сожалению, я не смог выделить тип объекта или место для поиска."}]
+    raw_object_name = primary_entity.get("name")
+    area_name = secondary_entity.get("name", "") # Безопасно получаем area_name
+
+    if not raw_object_name:
+        return [{"type": "text", "content": "Не смог определить, что нужно найти на карте."}]
+
+    # 1. Определяем, это поиск по типу или по конкретному имени
+    # Если нормализованное имя есть в нашем словаре ENTITY_MAP, значит, это поиск по ТИПУ.
+    normalized_type = normalize_entity_name(raw_object_name)
+    is_specific_name_search = normalized_type not in ENTITY_MAP.values()
+
+    # 2. Формируем payload в зависимости от типа поиска
+    payload = {"limit": 10}
+    if is_specific_name_search:
+        # Это поиск конкретного объекта по имени
+        payload["object_name"] = raw_object_name
+        if area_name:
+            payload["area_name"] = area_name
+        logger.info(f"Режим поиска: по имени. Payload: {payload}")
+    else:
+        # Это поиск по типу объекта
+        payload["object_type"] = normalized_type
+        if not area_name:
+            # Для поиска по типу ОБЯЗАТЕЛЬНО нужно место
+             return [{"type": "text", "content": f"Пожалуйста, уточните, где вы хотите найти '{raw_object_name}'?"}]
+        payload["area_name"] = area_name
+        logger.info(f"Режим поиска: по типу. Payload: {payload}")
+
+    # --- КОНЕЦ НОВОГО БЛОКА ---
 
     try:
         url = f"{API_URLS['show_map_infrastructure']}?debug_mode={str(debug_mode).lower()}"
-        payload = {
-            "area_name": area_name, 
-            "object_type": object_type, 
-            "limit": 10
-        }
-        
         logger.info(f"Запрос к API инфраструктуры: {url} с payload: {payload}")
         
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            # Безопасная проверка Content-Type
             content_type = resp.headers.get('Content-Type', '').lower()
             
             if 'application/json' not in content_type:
                 text_response = await resp.text()
                 logger.error(f"API инфраструктуры вернул не JSON. Status: {resp.status}, Content-Type: {content_type}")
-                
-                if resp.status == 404:
-                    return [{"type": "text", "content": f"Сервис поиска {object_type} временно недоступен."}]
-                elif resp.status == 500:
-                    return [{"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."}]
-                else:
-                    return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."}]
+                if resp.status == 404: return [{"type": "text", "content": f"Сервис поиска временно недоступен."}]
+                elif resp.status == 500: return [{"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."}]
+                else: return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."}]
 
-            # Если это JSON, парсим
             data = await resp.json()
             
             if not resp.ok:
                 error_msg = data.get('error', f'Ошибка {resp.status}')
                 logger.error(f"API инфраструктуры вернул ошибку: {error_msg}")
-                return [{"type": "text", "content": f"Не удалось найти {object_type} в {area_name}: {error_msg}"}]
+                return [{"type": "text", "content": f"Не удалось найти информацию: {error_msg}"}]
 
-            # Успешный ответ - формируем в том же стиле, что и другие map-ответы
             if data.get("static_map") and data.get("interactive_map"):
-                caption = data.get("answer", f"📍 Найдены {object_type} в {area_name}")
-                s = data["static_map"]
-                i = data["interactive_map"]
-                logger.info(f"static_map - {s} and interactive_map - {i}")
-                # Формируем ответ в том же формате, что используется в _send_responses для типа "map"
-                return [{
-                    "type": "map", 
-                    "static": s, 
-                    "interactive": i, 
-                    "caption": caption
-                }]
+                caption = data.get("answer", f"Результаты по вашему запросу на карте.")
+                # Кодируем URL перед отправкой
+                base_url = "https://testecobot.ru/maps/"
+                static_filename = data["static_map"].replace(base_url, "")
+                interactive_filename = data["interactive_map"].replace(base_url, "")
+                s_encoded = base_url + quote(static_filename)
+                i_encoded = base_url + quote(interactive_filename)
+
+                return [{"type": "map", "static": s_encoded, "interactive": i_encoded, "caption": caption}]
             else:
-                # Fallback - текстовый ответ
-                text_response = data.get("answer", f"{object_type} в {area_name} не найдены")
+                text_response = data.get("answer", "По вашему запросу ничего не найдено.")
                 if data.get("objects"):
-                    objects_list = [obj["name"] for obj in data["objects"] if "name" in obj]
+                    objects_list = [obj["name"] for obj in data.get("objects", []) if "name" in obj]
                     if objects_list:
                         text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
-                
                 return [{"type": "text", "content": text_response}]
 
     except asyncio.TimeoutError:
         logger.error(f"Таймаут при запросе к API инфраструктуры")
-        return [{"type": "text", "content": "Сервер инфраструктуры не отвежает. Попробуйте позже."}]
+        return [{"type": "text", "content": "Сервер инфраструктуры не отвечает. Попробуйте позже."}]
     except Exception as e:
         logger.error(f"Критическая ошибка в handle_draw_map_of_infrastructure: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."}]
-        
+            
 async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     if not geo_nom:
@@ -625,10 +576,7 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     raw_entity_name = primary_entity.get("name")
     canonical_entity_name = normalize_entity_name(raw_entity_name)
     
-    if not canonical_entity_name:
-        geo_type_payload = {"primary_type": [], "specific_types": []}
-    else:
-        geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
+    geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
         
     payload = {
         "location_info": { "exact_location": location_name, "region": "", "nearby_places": [] },

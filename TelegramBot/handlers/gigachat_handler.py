@@ -167,7 +167,32 @@ class GigaChatHandler:
                 await message.answer_photo(resp_data["content"])
             elif response_type == "map":
                 kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
-                await message.answer_photo(photo=resp_data["static"], caption=resp_data.get("caption", ""), reply_markup=kb, parse_mode="Markdown")
+                static_url = resp_data["static"]
+                caption = resp_data.get("caption", "")
+
+                # --- НАЧАЛО ДИАГНОСТИЧЕСКОГО БЛОКА ---
+                logger.info(f"ДИАГНОСТИКА: Начинаю проверку URL: {static_url}")
+                try:
+                    # Пытаемся сделать HEAD-запрос, чтобы получить заголовки, не скачивая файл
+                    async with self.session.head(static_url, timeout=20, allow_redirects=True) as head_response:
+                        logger.info(f"ДИАГНОСТИКА: HEAD-запрос успешен. Статус: {head_response.status}")
+                        logger.info(f"ДИАГНОСТИКА: Заголовки ответа: {head_response.headers}")
+                    
+                    # Если HEAD прошел, попробуем получить начало файла
+                    async with self.session.get(static_url, timeout=20) as get_response:
+                        if get_response.ok:
+                            content_preview = await get_response.content.read(200) # Читаем первые 200 байт
+                            logger.info(f"ДИАГНОСТИКА: GET-запрос успешен. Первые 200 байт: {content_preview}")
+                        else:
+                            logger.warning(f"ДИАГНОСТИКА: GET-запрос вернул ошибку. Статус: {get_response.status}")
+
+                except Exception as e:
+                    logger.error(f"ДИАГНОСТИКА: Произошла ошибка при проверке URL.", exc_info=True)
+                logger.info("ДИАГНОСТИКА: Проверка URL завершена. Передаю URL в answer_photo.")
+                # --- КОНЕЦ ДИАГНОСТИЧЕСКОГО БЛОКА ---
+                
+                await message.answer_photo(photo=static_url, caption=caption, reply_markup=kb, parse_mode="Markdown")
+
         return was_successful
 
     def _build_keyboard(self, buttons_data: list) -> InlineKeyboardMarkup | None:
