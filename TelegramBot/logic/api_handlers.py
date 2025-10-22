@@ -10,7 +10,9 @@ from urllib.parse import quote
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
-from logic.entity_normalizer_for_maps import normalize_entity_name, ENTITY_MAP
+from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
+from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP
+from logic.baikal_context import determine_baikal_relation
 
 logger = logging.getLogger(__name__)
 
@@ -347,11 +349,9 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
             # Проверяем, включен ли fallback для пользователя
             if get_user_fallback_setting(user_id):
                 logger.info(f"[{user_id}] Запускаем GigaChat fallback для запроса: '{original_query}'")
-                # Здесь должен быть вызов асинхронной функции fallback, если она у вас есть
-                # fallback_answer = await call_gigachat_fallback_service(session, original_query)
-                # if fallback_answer: 
-                #     return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
-                pass # Заглушка, если fallback не реализован
+                fallback_answer = await call_gigachat_fallback_service(session, original_query)
+                if fallback_answer: 
+                    return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
             
             return [{"type": "text", "content": f"К сожалению, у меня нет описания для «{object_nom}»."}]
 
@@ -436,7 +436,7 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
 
     # 1. Определяем, это поиск по типу или по конкретному имени
     # Если нормализованное имя есть в нашем словаре ENTITY_MAP, значит, это поиск по ТИПУ.
-    normalized_type = normalize_entity_name(raw_object_name)
+    normalized_type = normalize_entity_name_for_maps(raw_object_name)
     is_specific_name_search = normalized_type not in ENTITY_MAP.values()
 
     # 2. Формируем payload в зависимости от типа поиска
@@ -574,14 +574,55 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
         location_name = primary_entity.get("name", "")
     
     raw_entity_name = primary_entity.get("name")
+    entity_category = primary_entity.get("category", "Достопримечательности")
+    
     canonical_entity_name = normalize_entity_name(raw_entity_name)
     
-    geo_type_payload = {"primary_type": ["Достопримечательности"], "specific_types": [canonical_entity_name]}
+    specific_types_list = []
+    if canonical_entity_name:
+        if canonical_entity_name in GROUP_ENTITY_MAP:
+            specific_types_list = GROUP_ENTITY_MAP[canonical_entity_name]
+        else:
+            specific_types_list = [canonical_entity_name]
+    
+    # Определяем отношение к Байкалу с помощью отдельного модуля
+    baikal_relation = determine_baikal_relation(
+        query=original_query,
+        entity_name=primary_entity.get("name", ""),
+        entity_type=primary_entity.get("type", "")
+    )
+    
+    # Формируем location_info в зависимости от контекста
+    location_info = {"nearby_places": []}
+    
+    if baikal_relation:
+        # Если запрос связан с Байкалом, передаем конкретное местоположение только если оно не Байкал
+        import re
+        baikal_pattern = re.compile(r'байкал?[а-я]*')
+        if location_name and not baikal_pattern.search(location_name.lower()):
+            location_info["exact_location"] = location_name
+            location_info["region"] = ""
+        else:
+            location_info["exact_location"] = ""
+            location_info["region"] = ""
+    else:
+        # Обычный запрос без отношения к Байкалу
+        location_info["exact_location"] = location_name
+        location_info["region"] = ""
+    
+    geo_type_payload = {
+        "primary_type": [entity_category],
+        "specific_types": specific_types_list
+    }
         
     payload = {
-        "location_info": { "exact_location": location_name, "region": "", "nearby_places": [] },
+        "location_info": location_info,
         "geo_type": geo_type_payload
     }
+    
+    # Добавляем baikal_relation в payload только если он определен
+    if baikal_relation:
+        payload["baikal_relation"] = baikal_relation
     
     url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
     logger.info(f"Запрос к `find_geo_special_description` с payload: {payload}")
@@ -589,81 +630,50 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     try:
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
-                logger.error(f"API `find_geo_special_description` вернул ошибку {resp.status}. Payload: {payload}")
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()
-            logger.debug(f"Получен полный ответ от API: {data}")
+            final_responses = []
 
-            # 1. Проверяем приоритетный ответ от GigaChat
             gigachat_answer = data.get("gigachat_answer")
             if gigachat_answer and gigachat_answer.strip():
                 logger.info("Используем ответ от GigaChat.")
-                return [{"type": "text", "content": gigachat_answer.strip()}]
+                final_responses.append({"type": "text", "content": gigachat_answer.strip()})
 
-            # 2. Если его нет, обрабатываем descriptions
-            api_message = data.get("message")
-            if api_message:
-                logger.info(f"Сообщение от API: '{api_message}'")
-
-            descriptions = data.get("descriptions")
-            if descriptions and isinstance(descriptions, list):
-                logger.info("Ответ GigaChat отсутствует. Ищем первое валидное описание и список заголовков.")
-                
-                # ---> [НАЧАЛО НОВОЙ ЛОГИКИ]
-                
-                responses_to_send = []
+            elif descriptions := data.get("descriptions"):
+                logger.info("Ответ GigaChat отсутствует. Ищем в 'descriptions'.")
                 first_valid_index = -1
-
-                # Шаг 1: Найти контент первого валидного описания и его индекс
                 for i, desc in enumerate(descriptions):
-                    content = desc.get("content")
-                    if content and content.strip():
-                        responses_to_send.append({"type": "text", "content": content.strip()})
-                        first_valid_index = i
-                        logger.info(f"Найдено первое валидное описание с индексом {i}.")
-                        break # Прерываем цикл, как только нашли первое
+                    if content := desc.get("content"):
+                        if content.strip():
+                            final_responses.append({"type": "text", "content": content.strip()})
+                            first_valid_index = i
+                            break
                 
-                # Если мы нашли хотя бы одно описание
                 if first_valid_index != -1:
-                    # Шаг 2: Собрать до 10 заголовков из ОСТАЛЬНЫХ описаний
                     remaining_titles = []
-                    # Начинаем со следующего элемента после найденного
                     for desc in descriptions[first_valid_index + 1:]:
-                        title = desc.get("title")
-                        if title and title.strip():
-                            remaining_titles.append(title.strip())
-                        # Прекращаем, как только набрали 10 заголовков
+                        if title := desc.get("title"):
+                            if title.strip():
+                                remaining_titles.append(title.strip())
                         if len(remaining_titles) >= 10:
                             break
                     
-                    # Шаг 3: Если есть заголовки, сформировать из них второе сообщение
                     if remaining_titles:
-                        # Форматируем список заголовков в красивую строку
                         title_list_str = "\n".join(f"• {title}" for title in remaining_titles)
                         full_title_message = f"Также могут быть интересны:\n{title_list_str}"
-                        
-                        responses_to_send.append({"type": "text", "content": full_title_message})
-                        logger.info(f"Сформировано второе сообщение с {len(remaining_titles)} заголовками.")
+                        final_responses.append({"type": "text", "content": full_title_message})
 
-                    return responses_to_send
+            # Если после всех проверок ответов нет, возвращаем сообщение по умолчанию
+            if not final_responses:
+                 final_responses.append({"type": "text", "content": "К сожалению, по вашему запросу ничего не найдено."})
 
-                # Если цикл завершился, а мы ничего не нашли
-                logger.warning("`descriptions` найден, но не содержит ни одного элемента с валидным контентом.")
-                # ---> [КОНЕЦ НОВОЙ ЛОГИКИ]
-
-            # 3. Fallback: если нет ни GigaChat, ни валидных descriptions
-            final_message = api_message or "К сожалению, по вашему запросу ничего не найдено."
-            if not final_message.strip():
-                final_message = "К сожалению, по вашему запросу ничего не найдено."
-            
-            logger.warning(f"В ответе API нет валидного контента. Возвращаем fallback-сообщение: '{final_message}'")
-            return [{"type": "text", "content": final_message}]
+            return final_responses
 
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
-               
+                               
 async def _update_geo_context(user_id: str, result: dict, original_query: str):
     """Сохраняет географические сущности в контекст пользователя"""
     try:
