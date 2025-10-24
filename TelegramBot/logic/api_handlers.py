@@ -323,8 +323,22 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
 
             elif status == "found":
                 canonical_name = data.get("matches", [object_nom])[0]
-                desc_url = f"{API_URLS['get_description']}?species_name={canonical_name}&debug_mode={str(debug_mode).lower()}"
-                logger.debug(f"[{user_id}] Объект найден: '{canonical_name}'. Запрос описания по URL: {desc_url}")
+
+                # --- [ИЗМЕНЕНИЕ] ---
+                # Получаем настройку стоп-листа пользователя
+                user_settings = get_user_settings(user_id)
+                stoplist_enabled = user_settings.get("stoplist_enabled", True) # По умолчанию включен
+                # 1 - выключен, 2 - включен
+                stoplist_param = 2 if stoplist_enabled else 1
+                
+                # Добавляем параметр in_stoplist в URL
+                desc_url = (f"{API_URLS['get_description']}?species_name={canonical_name}"
+                            f"&debug_mode={str(debug_mode).lower()}"
+                            f"&in_stoplist={stoplist_param}"
+                            f"&query={original_query}")
+                # --- [КОНЕЦ ИЗМЕНЕНИЯ] ---
+                
+                logger.info(f"[{user_id}] Объект найден: '{canonical_name}'. Запрос описания по URL: {desc_url}")
 
                 async with session.get(desc_url, timeout=DEFAULT_TIMEOUT) as desc_resp:
                     if desc_resp.ok:
@@ -342,7 +356,9 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                         if text:
                             logger.info(f"[{user_id}] Описание для '{canonical_name}' успешно найдено и отправлено.")
                             return [{"type": "text", "content": text, "canonical_name": canonical_name}]
-            
+                    elif desc_resp.status == 400:
+                        desc_data = await desc_resp.json()
+                        return [{"type": "text", "content": desc_data.get("error", "Я не смог найти ответ")}]
             # Этот блок сработает, если status == "not_found" или если для "found" не нашлось текста
             logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено ни на одном из этапов.")
             
@@ -358,7 +374,7 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
     except Exception as e:
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
         return [{"type": "text", "content": "Проблема с подключением к серверу описаний."}]
-        
+            
 async def handle_comparison(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     # TODO: Логика сравнения требует адаптации под новую систему контекста (Шаг 4)
     # Пока что это просто заглушка

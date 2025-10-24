@@ -19,11 +19,17 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     user_settings = get_user_settings(user_id)
     current_mode = user_settings.get("mode", "rasa")
     fallback_enabled = user_settings.get("gigachat_fallback", False)
+    # --- [ИЗМЕНЕНИЕ] ---
+    # Получаем настройку стоп-листа, по умолчанию он включен (True)
+    stoplist_enabled = user_settings.get("stoplist_enabled", True)
 
     rasa_button_text = "✅ Режим: Rasa" if current_mode == "rasa" else "Режим: Rasa"
     gigachat_button_text = "✅ Режим: GigaChat" if current_mode == "gigachat" else "Режим: GigaChat"
     fallback_status = "✅ Вкл" if fallback_enabled else "❌ Выкл"
-    
+    # --- [ИЗМЕНЕНИЕ] ---
+    # Формируем текст для новой кнопки
+    stoplist_status = "❌ Выкл" if stoplist_enabled else "✅ Вкл"
+
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton(rasa_button_text, callback_data="set_mode_rasa"),
@@ -31,6 +37,11 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     )
     keyboard.add(
         InlineKeyboardButton(f"Дополнять GigaChat: {fallback_status}", callback_data="toggle_fallback")
+    )
+    # --- [ИЗМЕНЕНИЕ] ---
+    # Добавляем новую кнопку в клавиатуру
+    keyboard.add(
+        InlineKeyboardButton(f"Стоп-лист: {stoplist_status}", callback_data="toggle_stoplist")
     )
     return keyboard
 
@@ -84,7 +95,7 @@ def register_general_handlers(dp: Dispatcher):
             "Или напечатайте символ @ и нажмите Tab"
         )
         await message.answer(help_text, parse_mode="Markdown")
-                
+
     # --- ОБРАБОТЧИК КНОПКИ "Настройки" ---
     @dp.message_handler(lambda message: message.text == "⚙ Настройки")
     async def handle_settings(message: types.Message):
@@ -92,8 +103,9 @@ def register_general_handlers(dp: Dispatcher):
         keyboard = create_settings_keyboard(user_id)
         await message.answer("Меню настроек:", reply_markup=keyboard)
 
-    # --- ОБРАБОТЧИК КОЛБЭКОВ ОТ КНОПОК НАСТРОЕК ---
-    @dp.callback_query_handler(lambda c: c.data in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback"])
+    # --- [ИЗМЕНЕНИЕ] ---
+    # Добавляем 'toggle_stoplist' в список обрабатываемых колбэков
+    @dp.callback_query_handler(lambda c: c.data in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback", "toggle_stoplist"])
     async def process_settings_callback(callback_query: types.CallbackQuery):
         user_id = str(callback_query.from_user.id)
         data = callback_query.data
@@ -109,6 +121,13 @@ def register_general_handlers(dp: Dispatcher):
             new_state = not current_fallback_state
             update_user_settings(user_id, {"gigachat_fallback": new_state})
             await callback_query.answer(f"Режим дополнения GigaChat {'включен' if new_state else 'выключен'}")
+        # --- [ИЗМЕНЕНИЕ] ---
+        # Добавляем блок для обработки переключения стоп-листа
+        elif data == "toggle_stoplist":
+            current_stoplist_state = get_user_settings(user_id).get("stoplist_enabled", True)
+            new_state = not current_stoplist_state
+            update_user_settings(user_id, {"stoplist_enabled": new_state})
+            await callback_query.answer(f"Стоп-лист {'включен' if new_state else 'выключен'}")
 
         keyboard = create_settings_keyboard(user_id)
         try:
@@ -116,5 +135,5 @@ def register_general_handlers(dp: Dispatcher):
                 await callback_query.message.edit_reply_markup(keyboard)
         except Exception:
             pass # Если не удалось обновить, ничего страшного
-            
+
 # --- КОНЕЦ ФАЙЛА: handlers/general.py ---
