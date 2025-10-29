@@ -5,12 +5,14 @@ from logging.handlers import TimedRotatingFileHandler
 import sys
 
 LOG_FILE_PATH = "bot.log"
-UNHANDLED_QUERIES_LOG_PATH = "unhandled_queries.log" # Имя нового файла
+UNHANDLED_QUERIES_LOG_PATH = "unhandled_queries.log"
+
 
 def setup_logging():
     """Настраивает логирование в файл с ротацией и в консоль."""
-    
-    # --- Основной логгер (без изменений) ---
+    root_logger = logging.getLogger()
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     formatter = logging.Formatter(

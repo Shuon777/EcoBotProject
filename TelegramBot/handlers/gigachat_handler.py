@@ -54,8 +54,8 @@ class GigaChatHandler:
         
         try:
             await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
-            
-            analysis = await self.qa.analyze_query(query)
+            latest_history = await self.dialogue_manager.get_latest_history(user_id)
+            analysis = await self.qa.analyze_query(query, history=latest_history)
             if not analysis:
                 await self._reply_with_error(message, f"QueryAnalyzer не вернул анализ для запроса: '{query}'")
                 return
@@ -63,7 +63,7 @@ class GigaChatHandler:
             final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis)
             action = final_analysis.get("action")
 
-            handler = None # Инициализируем обработчик как None
+            handler = None 
             if action and action != "unknown":
                 primary_entity_type = final_analysis.get("primary_entity", {}).get("type", "ANY")
                 handler = self.action_handlers.get((action, primary_entity_type))
@@ -104,9 +104,8 @@ class GigaChatHandler:
             
             responses = await handler(**args_to_pass)
             
-            was_successful = await self._send_responses(message, responses)
-            if was_successful:
-                await self.dialogue_manager.update_history(user_id, final_analysis)
+            await self._send_responses(message, responses)
+            await self.dialogue_manager.update_history(user_id, query, final_analysis, responses)
             
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в GigaChatHandler.process_message: {e}", exc_info=True)
@@ -132,42 +131,24 @@ class GigaChatHandler:
             await callback_query.message.answer("Произошла ошибка при обработке вашего выбора.")
             await callback_query.answer()
 
-    async def _send_responses(self, message: types.Message, responses: list) -> bool:
+    async def _send_responses(self, message: types.Message, responses: list):
         """Отправляет отформатированные ответы пользователю."""
-        was_successful = True
         for resp_data in responses:
             response_type = resp_data.get("type")
             if response_type in ["clarification", "clarification_map"]:
-                was_successful = False
                 keyboard = self._build_keyboard(resp_data.get("buttons"))
                 if response_type == "clarification_map":
                     await message.answer_photo(photo=resp_data["static_map"], caption=resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
                 else:
                     await message.answer(resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
-                break
+                break # После clarification другие сообщения не шлем
             elif response_type == "text":
                 await send_long_message(message, resp_data["content"], parse_mode=resp_data.get("parse_mode"))
             elif response_type == "image":
                 await message.answer_photo(resp_data["content"])
             elif response_type == "map":
                 kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
-                static_url = resp_data["static"]
-                caption = resp_data.get("caption", "")
-                try:  
-                    async with self.session.get(static_url, timeout=20) as get_response:
-                        if get_response.ok:
-                            content_preview = await get_response.content.read(200) # Читаем первые 200 байт
-                            logger.info(f"ДИАГНОСТИКА: GET-запрос успешен. Первые 200 байт: {content_preview}")
-                        else:
-                            logger.warning(f"ДИАГНОСТИКА: GET-запрос вернул ошибку. Статус: {get_response.status}")
-
-                except Exception as e:
-                    logger.error(f"ДИАГНОСТИКА: Произошла ошибка при проверке URL.", exc_info=True)
-                logger.info("ДИАГНОСТИКА: Проверка URL завершена. Передаю URL в answer_photo.")
-            
-                await message.answer_photo(photo=static_url, caption=caption, reply_markup=kb, parse_mode="Markdown")
-
-        return was_successful
+                await message.answer_photo(photo=resp_data["static"], caption=resp_data.get("caption", ""), reply_markup=kb, parse_mode="Markdown")
 
     def _build_keyboard(self, buttons_data: list) -> InlineKeyboardMarkup | None:
         """Универсальный сборщик инлайн-клавиатур."""
@@ -224,10 +205,19 @@ class GigaChatHandler:
             await cq.message.edit_text(final_text, reply_markup=None)
 
     async def _handle_exploration(self, cq: types.CallbackQuery):
+        """
+        Обрабатывает нажатие на кнопки "Умный обзор" или "Полный список"
+        для исследования объектов в определенной локации.
+        """
+        await cq.answer("Загружаю данные...")
         await cq.message.edit_reply_markup(reply_markup=None)
+        
+        user_id = str(cq.from_user.id) # Получаем ID пользователя
         _, action, geo_place = cq.data.split(':', 2)
+        
         url = f"{API_URLS['objects_in_polygon']}?debug_mode=false"
         payload = {"name": geo_place, "buffer_radius_km": 5}
+        
         async with self.session.post(url, json=payload) as resp:
             if not resp.ok:
                 await cq.message.answer("Не удалось получить данные о локации.")
@@ -239,20 +229,34 @@ class GigaChatHandler:
             await cq.message.answer(f"В районе «{geo_place}» не найдено объектов для обзора.")
             return
 
+        # Готовим переменные для сохранения в историю
+        simulated_query = f"Пользователь выбрал '{action}' для локации '{geo_place}'"
+        simulated_analysis = {"action": "list_items", "primary_entity": None, "secondary_entity": {"name": geo_place, "type": "GeoPlace"}}
+        response_to_save = []
+        
         if action == "full_list":
             text = f"📋 **Все объекты в районе «{geo_place}»**:\n\n" + "• " + "\n• ".join(objects_list)
             await send_long_message(cq.message, text, parse_mode="Markdown")
+            response_to_save.append({"type": "text", "content": text}) # Готовим ответ для истории
         
         elif action == "overview":
             await cq.message.answer("Минутку, готовлю умный обзор...")
             analysis = await self.qa.analyze_location_objects(geo_place, objects_list)
+            
             text = f"🌿 **{geo_place}**\n\n{analysis['statistics']}\n\n"
             if analysis.get('interesting_objects'):
                 text += "🎯 **Самые интересные:**\n"
                 for item in analysis['interesting_objects']:
                     text += f"• **{item['name']}** - {item['reason']}\n"
             await send_long_message(cq.message, text, parse_mode="Markdown")
-        await cq.answer()
+            response_to_save.append({"type": "text", "content": text}) # Готовим ответ для истории
+
+        # --- [ИСПРАВЛЕНИЕ] ---
+        # Обновляем историю диалога ПОСЛЕ того, как отправили пользователю список.
+        # Это ключевой шаг, который сохранит список в контексте для следующего запроса.
+        if response_to_save:
+            await self.dialogue_manager.update_history(user_id, simulated_query, simulated_analysis, response_to_save)
+        # --- [КОНЕЦ ИСПРАВЛЕНИЯ] ---
     
     async def _handle_fallback(self, cq: types.CallbackQuery):
         await cq.message.edit_reply_markup(reply_markup=None)
@@ -288,8 +292,8 @@ class GigaChatHandler:
 
         logger.debug(f"[{user_id}] Повторный вызов `handle_get_picture` с упрощенным анализом: {simplified_analysis}")
         responses = await handle_get_picture(self.session, simplified_analysis, user_id, False)
-
-        await self.dialogue_manager.update_history(user_id, simplified_analysis)
+        simulated_query = f"Упрощенный запрос (fallback): {object_nom}"
+        await self.dialogue_manager.update_history(user_id, simulated_query, simplified_analysis, responses)
 
         await self._send_responses(cq.message, responses)
     
@@ -319,9 +323,8 @@ class GigaChatHandler:
         await cq.answer(f"Выбрано: {selected_object}")
 
         simulated_analysis = {"action": "describe", "primary_entity": {"name": selected_object, "type": "Biological"}}
-        await self.dialogue_manager.update_history(user_id, simulated_analysis)
-
         responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Уточнение: {selected_object}", False)
+        simulated_query = f"Выбор из уточнений: {selected_object}"
+        await self.dialogue_manager.update_history(user_id, simulated_query, simulated_analysis, responses)
         await self._send_responses(cq.message, responses)
-
         await context_manager.delete_context(options_key)

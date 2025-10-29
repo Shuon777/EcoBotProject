@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
 from langchain_core.prompts import ChatPromptTemplate
 
-from logic.prompts import UniversalPrompts, StandardPrompts 
+from logic.prompts import UniversalPrompts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,15 +44,41 @@ class QueryAnalyzer:
             logger.error(f"Ошибка создания GigaChat инстанса: {str(e)}")
             raise
 
-    async def analyze_query(self, query: str) -> Optional[Dict[str, Any]]:
+    async def analyze_query(self, query: str, history: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
         Анализирует запрос пользователя с помощью универсального промпта и возвращает структурированный JSON.
         """
         logger.info(f"Универсальный анализ запроса: '{query}'")
+        history_block = ""
+        if history:
+            prev_query = history.get("query")
+            prev_response_list = history.get("response", [])
+            
+            # Извлекаем только текстовое содержимое из ответа бота для простоты
+            prev_response_texts = [
+                str(resp.get("content", "")) for resp in prev_response_list if resp.get("type") == "text"
+            ]
+            # Если текста не было (например, только карта), возьмем caption
+            if not prev_response_texts:
+                prev_response_texts = [
+                    str(resp.get("caption", "")) for resp in prev_response_list if resp.get("caption")
+                ]
+
+            prev_response = "\n".join(prev_response_texts).strip()
+
+            if prev_query and prev_response:
+                history_block = (
+                    "---\n"
+                    "Предыдущий диалог:\n"
+                    f"- Запрос пользователя: \"{prev_query}\"\n"
+                    f"- Ответ бота: {prev_response}\n"
+                    "---\n"
+                )
+                logger.info(f"Используется контекст: {history_block}")
         try:
             prompt = UniversalPrompts.analysis_prompt()
             chain = prompt | self.llm
-            response = await chain.ainvoke({"query": query})
+            response = await chain.ainvoke({"query": query, "history_block": history_block})
 
             generated_text = response.content.strip()
             

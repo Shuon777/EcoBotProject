@@ -15,116 +15,85 @@ class DialogueManager:
         self, user_id: str, current_analysis: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Обогащает текущий анализ данными из истории диалога.
+        Обогащает текущий анализ данными из истории диалога, корректно
+        обрабатывая уточнения, смену действия и смену объекта.
         """
-        # --- НАЧАЛО НОВОЙ ЛОГИКИ ---
-
-        # ПРОВЕРКА №1: Смена темы (полностью пустой 'unknown')
-        is_topic_change = (
-            current_analysis.get("action") == "unknown" and
-            not current_analysis.get("primary_entity") and
-            not current_analysis.get("secondary_entity") and
-            not current_analysis.get("attributes", {}) 
+        # [ИСПРАВЛЕНИЕ]
+        # Мы считаем запрос "новым" и не требующим контекста, только если
+        # он сам по себе содержит и действие, и объект.
+        # Запрос "А эдельвейс?" сюда не попадет, так как его action="unknown".
+        is_new_full_request = (
+            current_analysis.get("action") != "unknown" and
+            current_analysis.get("primary_entity") and
+            current_analysis.get("primary_entity").get("name")
         )
-        if is_topic_change:
-            logger.debug(f"[{user_id}] Обнаружена смена темы. Контекст не применяется.")
+        if is_new_full_request:
+            logger.debug(f"[{user_id}] Обнаружен новый полноценный запрос. Контекст не применяется.")
             return current_analysis
 
-        # ПРОВЕРКА №2: Новый полноценный запрос (с явным действием и сущностью)
-        # В этом случае контекст тоже не нужен.
-        if current_analysis.get("action") != "unknown" and current_analysis.get("primary_entity"):
-             logger.debug(f"[{user_id}] Обнаружен новый полноценный запрос. Контекст не применяется.")
-             return current_analysis
-
-        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
-
-        # Если мы дошли до сюда, значит, это УТОЧНЕНИЕ, и мы должны применить контекст.
-        
-        if not self.context_manager.redis_client:
+        # Если истории нет, обогащать нечем.
+        last_history_entry = await self.get_latest_history(user_id)
+        if not last_history_entry:
             return current_analysis
 
-        user_context = await self.context_manager.get_context(user_id)
-        history = user_context.get("history", [])
-        last_analysis = history[0] if history else {}
+        logger.debug(f"[{user_id}] Запрос является уточнением. Применяем контекст из истории.")
         
-        if not last_analysis:
-            return current_analysis
-
-        logger.debug(f"[{user_id}] НАЧАЛО ОБОГАЩЕНИЯ (уточняющий запрос). Текущий анализ: {current_analysis}")
-        logger.debug(f"[{user_id}] Контекст: {last_analysis}")
-
-        # --- НАЧАЛО ЛОГИКИ "УМНОГО" ОБОГАЩЕНИЯ ---
-        
-        # Начинаем с копии старого контекста
+        # 1. Берем за основу анализ из ПРЕДЫДУЩЕГО шага
+        last_analysis = last_history_entry.get("analysis", {})
         final_analysis = deepcopy(last_analysis)
         
-        # Если пришла новая primary_entity, она заменяет старую, но action и атрибуты остаются!
-        if current_analysis.get("primary_entity"):
-            final_analysis["primary_entity"] = current_analysis["primary_entity"]
-            # ВАЖНО: При смене основной сущности, старые атрибуты и secondary_entity,
-            # относящиеся к прошлой, должны быть сброшены.
-            final_analysis["attributes"] = current_analysis.get("attributes", {})
-            final_analysis["secondary_entity"] = current_analysis.get("secondary_entity")
-            logger.debug(f"[{user_id}] Сменили primary_entity. Атрибуты и secondary_entity сброшены.")
-        else:
-            # Если новой primary_entity нет, то просто объединяем атрибуты и secondary_entity
-            final_analysis.get("attributes", {}).update(current_analysis.get("attributes", {}))
-            if current_analysis.get("secondary_entity"):
-                final_analysis["secondary_entity"] = current_analysis.get("secondary_entity")
+        # 2. "Накатываем" поверх него изменения из ТЕКУЩЕГО "сырого" анализа
         
-        # Явный action из нового запроса всегда имеет приоритет
+        # Если в текущем запросе определился новый объект, он главнее старого.
+        if current_analysis.get("primary_entity") and current_analysis.get("primary_entity").get("name"):
+            final_analysis["primary_entity"] = current_analysis["primary_entity"]
+        
+        # Если определился новый action, он главнее старого.
         if current_analysis.get("action") != "unknown":
             final_analysis["action"] = current_analysis["action"]
-            
-        # --- КОНЕЦ ЛОГИКИ "УМНОГО" ОБОГАЩЕНИЯ ---
-
+        
+        # Атрибуты и secondary_entity просто добавляются/обновляются.
+        if "attributes" in final_analysis:
+            final_analysis["attributes"].update(current_analysis.get("attributes", {}))
+        else:
+            final_analysis["attributes"] = current_analysis.get("attributes", {})
+        
+        if current_analysis.get("secondary_entity"):
+            final_analysis["secondary_entity"] = current_analysis.get("secondary_entity")
+        
         logger.info(f"[{user_id}] ИТОГ ОБОГАЩЕНИЯ: {final_analysis}")
         return final_analysis
     
-    async def update_history(self, user_id: str, final_analysis: Dict[str, Any]):
-        # ... (этот метод остается без изменений)
+    async def update_history(self, user_id: str, query: str, final_analysis: Dict[str, Any], response: list):
         primary_entity = final_analysis.get("primary_entity")
-        # --- ИСПРАВЛЕНИЕ: Не сохраняем в историю "пустые" unknown запросы ---
         if final_analysis.get("action") == "unknown" and (not primary_entity or not primary_entity.get("name")):
-             logger.debug(f"[{user_id}] Пропуск сохранения нецелевого запроса в историю.")
-             return
-
-        if not primary_entity or not primary_entity.get("name"):
-            logger.debug(f"[{user_id}] Пропуск сохранения в историю: в анализе нет `primary_entity`.")
+            logger.debug(f"[{user_id}] Пропуск сохранения нецелевого запроса в историю.")
             return
+
+        history_entry = {
+            "query": query,
+            "analysis": final_analysis,
+            "response": response
+        }
 
         user_context = await self.context_manager.get_context(user_id)
         history = user_context.get("history", [])
         
-        updated_history = [final_analysis] + history[:1]
+        updated_history = [history_entry] + history[:1]
         user_context['history'] = updated_history
         
         await self.context_manager.set_context(user_id, user_context)
-        logger.info(f"[{user_id}] Контекст сохранен: {final_analysis}")
-
-    async def get_comparison_pair(
-        self, user_id: str, current_analysis: Dict[str, Any]
-    ) -> Optional[Dict[str, str]]:
-        """
-        Проверяет, можно ли предложить сравнение на основе текущего и предыдущего запроса.
-        """
+        logger.info(f"[{user_id}] Контекст сохранен. Query: '{query}'")
+    
+        
+    async def get_latest_history(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Возвращает самую последнюю запись из истории диалога."""
         if not self.context_manager.redis_client:
             return None
-
+        
         user_context = await self.context_manager.get_context(user_id)
         history = user_context.get("history", [])
-        last_analysis = history[0] if history else {}
-
-        current_entity = current_analysis.get("primary_entity", {})
-        last_entity = last_analysis.get("primary_entity", {})
-
-        if (current_analysis.get("action") in ["describe", "show_image"] and
-                current_entity.get("type") == "Biological" and
-                last_entity.get("type") == "Biological" and
-                current_entity.get("name") and last_entity.get("name") and
-                current_entity.get("name") != last_entity.get("name")):
-            
-            logger.info(f"[{user_id}] Найдена пара для сравнения: {last_entity['name']} и {current_entity['name']}")
-            return {"object1": last_entity["name"], "object2": current_entity["name"]}
         
-        return None
+        return history[0] if history else None
+
+  
