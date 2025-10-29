@@ -6,9 +6,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
-from logic.api_handlers import (
-    handle_get_description, handle_get_picture, handle_draw_locate_map,
-    handle_nearest, handle_objects_in_polygon, handle_geo_request, handle_draw_map_of_infrastructure
+from logic.action_handlers.biological import handle_get_description, handle_get_picture
+from logic.action_handlers.geospatial import (
+    handle_draw_locate_map, handle_nearest, handle_objects_in_polygon,
+    handle_geo_request, handle_draw_map_of_infrastructure
 )
 from utils.bot_utils import send_long_message
 from utils.context_manager import RedisContextManager
@@ -17,8 +18,6 @@ from config import API_URLS
 unhandled_logger = logging.getLogger("unhandled")
 logger = logging.getLogger(__name__)
 
-
-# Типизация для наших словарей-диспетчеров, чтобы код был понятнее
 ActionHandler = Callable[[Dict[str, Any], str, str], Awaitable[list]]
 CallbackHandler = Callable[[types.CallbackQuery], Awaitable[None]]
 
@@ -27,9 +26,6 @@ class GigaChatHandler:
         self.qa = qa
         self.dialogue_manager = dialogue_manager
         self.session = session
-
-        # --- ДИСПЕТЧЕР ДЛЯ ТЕКСТОВЫХ СООБЩЕНИЙ ---
-        # Ключ: (action, entity_type). Значение: функция-обработчик из api_handlers.
         self.action_handlers: Dict[tuple[str, str], ActionHandler] = {
             ("describe", "Biological"): handle_get_description,
             ("describe", "Infrastructure"): handle_geo_request,
@@ -37,13 +33,11 @@ class GigaChatHandler:
             ("show_image", "Biological"): handle_get_picture,
             ("show_map", "Biological"): handle_draw_locate_map,
             ("show_map", "Infrastructure"): handle_draw_map_of_infrastructure,
-            ("find_nearby", "ANY"): handle_nearest, # ANY - для случаев, где тип не важен
+            ("find_nearby", "ANY"): handle_nearest,
             ("list_items", "Biological"): handle_objects_in_polygon,
             ("list_items", "Infrastructure"): handle_geo_request,
         }
 
-        # --- ДИСПЕТЧЕР ДЛЯ ОБРАБОТКИ КНОПОК ---
-        # Ключ: префикс callback_data. Значение: приватный метод этого класса.
         self.callback_handlers: Dict[str, CallbackHandler] = {
             "clarify_idx": self._handle_clarify_by_index,
             "clarify_more": self._handle_pagination,
@@ -79,13 +73,9 @@ class GigaChatHandler:
                     else:
                         handler = self.action_handlers.get((action, "ANY"))
 
-            # --- НОВАЯ ЕДИНАЯ ЛОГИКА FALLBACK ---
-            # Срабатывает, если action="unknown" или для action не нашлось обработчика
             if not handler:
-                # 1. Логируем нераспознанный запрос в наш специальный файл
                 unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\"")
-                
-                # 2. Формируем полезный ответ с кнопкой-триггером
+
                 fallback_keyboard = types.InlineKeyboardMarkup()
                 fallback_keyboard.add(
                     types.InlineKeyboardButton(
@@ -99,11 +89,8 @@ class GigaChatHandler:
                     "Попробуйте использовать быстрый поиск с автодополнением, чтобы найти то, что вам нужно.",
                     reply_markup=fallback_keyboard
                 )
-                return # Завершаем выполнение
+                return
 
-            # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
-
-            # Если мы дошли до сюда, значит, хендлер найден. Продолжаем как обычно.
             logger.debug(f"[{user_id}] Диспетчер вызвал обработчик: {handler.__name__}")
 
             all_possible_args = {
@@ -130,7 +117,6 @@ class GigaChatHandler:
         user_id, data = str(callback_query.from_user.id), callback_query.data
         
         try:
-            # --- [НОВОЕ] ЛОГИКА ДИСПЕТЧЕРИЗАЦИИ ---
             prefix = data.split(':', 1)[0]
             handler = self.callback_handlers.get(prefix)
 
@@ -146,8 +132,6 @@ class GigaChatHandler:
             await callback_query.message.answer("Произошла ошибка при обработке вашего выбора.")
             await callback_query.answer()
 
-    # --- Приватные методы для чистоты кода ---
-
     async def _send_responses(self, message: types.Message, responses: list) -> bool:
         """Отправляет отформатированные ответы пользователю."""
         was_successful = True
@@ -160,7 +144,7 @@ class GigaChatHandler:
                     await message.answer_photo(photo=resp_data["static_map"], caption=resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
                 else:
                     await message.answer(resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
-                break # После clarification другие сообщения не шлем
+                break
             elif response_type == "text":
                 await send_long_message(message, resp_data["content"], parse_mode=resp_data.get("parse_mode"))
             elif response_type == "image":
@@ -169,16 +153,7 @@ class GigaChatHandler:
                 kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
                 static_url = resp_data["static"]
                 caption = resp_data.get("caption", "")
-
-                # --- НАЧАЛО ДИАГНОСТИЧЕСКОГО БЛОКА ---
-                logger.info(f"ДИАГНОСТИКА: Начинаю проверку URL: {static_url}")
-                try:
-                    # Пытаемся сделать HEAD-запрос, чтобы получить заголовки, не скачивая файл
-                    async with self.session.head(static_url, timeout=20, allow_redirects=True) as head_response:
-                        logger.info(f"ДИАГНОСТИКА: HEAD-запрос успешен. Статус: {head_response.status}")
-                        logger.info(f"ДИАГНОСТИКА: Заголовки ответа: {head_response.headers}")
-                    
-                    # Если HEAD прошел, попробуем получить начало файла
+                try:  
                     async with self.session.get(static_url, timeout=20) as get_response:
                         if get_response.ok:
                             content_preview = await get_response.content.read(200) # Читаем первые 200 байт
@@ -189,8 +164,7 @@ class GigaChatHandler:
                 except Exception as e:
                     logger.error(f"ДИАГНОСТИКА: Произошла ошибка при проверке URL.", exc_info=True)
                 logger.info("ДИАГНОСТИКА: Проверка URL завершена. Передаю URL в answer_photo.")
-                # --- КОНЕЦ ДИАГНОСТИЧЕСКОГО БЛОКА ---
-                
+            
                 await message.answer_photo(photo=static_url, caption=caption, reply_markup=kb, parse_mode="Markdown")
 
         return was_successful
@@ -209,14 +183,11 @@ class GigaChatHandler:
         logger.warning(f"[{message.chat.id}] {log_text}")
         await message.answer(reply_text)
 
-    # --- Приватные обработчики для кнопок ---
-
     async def _handle_pagination(self, cq: types.CallbackQuery):
         """Обрабатывает кнопку "Поискать еще", получая данные из Redis."""
         await cq.answer("Ищу дальше...")
         user_id = str(cq.from_user.id)
 
-        # 1. Получаем контекст из Redis
         context_manager = RedisContextManager()
         options_key = f"clarify_options:{user_id}"
         context_data = await context_manager.get_context(options_key)
@@ -225,7 +196,6 @@ class GigaChatHandler:
             await cq.message.edit_text("Извините, этот поиск уже неактуален. Пожалуйста, повторите ваш запрос.")
             return
 
-        # 2. Извлекаем необходимые данные
         ambiguous_term = context_data.get("original_term")
         current_offset = context_data.get("offset", 0)
         options_count = len(context_data.get("options", []))
@@ -233,27 +203,21 @@ class GigaChatHandler:
         if not ambiguous_term:
             await cq.message.edit_text("Произошла ошибка: не удалось найти исходный запрос для продолжения поиска.")
             return
-            
-        # 3. Рассчитываем новое смещение и создаем анализ
+
         new_offset = current_offset + options_count
         simulated_analysis = {
             "action": "describe",
             "primary_entity": {"name": ambiguous_term, "type": "Biological"},
             "offset": new_offset
         }
-        
-        # 4. Вызываем handle_get_description с новым смещением
-        # Этот вызов вернет НОВОЕ сообщение с новыми кнопками
+
         responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Пагинация: {ambiguous_term}", False)
         
-        # 5. Редактируем исходное сообщение, чтобы отправить новый ответ
-        # Важно! Мы ожидаем, что responses вернет только один элемент типа clarification
         if responses and responses[0].get("type") == "clarification":
             resp_data = responses[0]
             kb = self._build_keyboard(resp_data.get("buttons"))
             await cq.message.edit_text(resp_data["content"], reply_markup=kb)
         else:
-            # Если что-то пошло не так (например, больше ничего не найдено), просто обновляем текст
             final_text = "Больше ничего не найдено."
             if responses and responses[0].get("content"):
                 final_text = responses[0].get("content")
@@ -298,7 +262,6 @@ class GigaChatHandler:
         _, fallback_type, object_nom = cq.data.split(':', 2)
         logger.info(f"[{user_id}] Пользователь выбрал fallback: тип='{fallback_type}', объект='{object_nom}'")
 
-        # 1. Получаем исходные атрибуты из Redis
         context_manager = RedisContextManager()
         fallback_key = f"fallback_attributes:{user_id}"
         original_attributes = await context_manager.get_context(fallback_key)
@@ -307,7 +270,6 @@ class GigaChatHandler:
             await self._reply_with_error(cq.message, f"Не найдены атрибуты для fallback в Redis (key: {fallback_key})", "Ошибка: контекст для упрощения запроса утерян. Попробуйте снова.")
             return
 
-        # 2. Создаем новый, упрощенный `analysis`
         simplified_attributes = original_attributes.copy()
         if fallback_type == "no_season":
             simplified_attributes.pop("season", None)
@@ -322,17 +284,13 @@ class GigaChatHandler:
             "attributes": simplified_attributes,
         }
         
-        # 3. Очищаем Redis
         await context_manager.delete_context(fallback_key)
 
-        # 4. Вызываем `handle_get_picture` с новым анализом
         logger.debug(f"[{user_id}] Повторный вызов `handle_get_picture` с упрощенным анализом: {simplified_analysis}")
         responses = await handle_get_picture(self.session, simplified_analysis, user_id, False)
 
-        # 5. Сохраняем успешный упрощенный запрос в основную историю
         await self.dialogue_manager.update_history(user_id, simplified_analysis)
 
-        # 6. Отправляем результат
         await self._send_responses(cq.message, responses)
     
     
@@ -347,7 +305,6 @@ class GigaChatHandler:
             await cq.answer("Ошибка в данных кнопки.", show_alert=True)
             return
 
-        # 1. Достаем список вариантов из Redis
         context_manager = RedisContextManager()
         options_key = f"clarify_options:{user_id}"
         context_data = await context_manager.get_context(options_key)
@@ -357,18 +314,14 @@ class GigaChatHandler:
             await cq.message.answer("Извините, этот выбор уже неактуален. Пожалуйста, повторите ваш запрос.")
             await cq.answer()
             return
-            
-        # 2. Получаем выбранное полное имя по индексу
+
         selected_object = options[selected_index]
         await cq.answer(f"Выбрано: {selected_object}")
 
-        # 3. "Симулируем" новый анализ и передаем в обработчик
         simulated_analysis = {"action": "describe", "primary_entity": {"name": selected_object, "type": "Biological"}}
         await self.dialogue_manager.update_history(user_id, simulated_analysis)
-        
-        # Вызываем handle_get_description снова, но уже с однозначным именем
+
         responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Уточнение: {selected_object}", False)
         await self._send_responses(cq.message, responses)
-        
-        # 4. Очищаем временные данные из Redis
+
         await context_manager.delete_context(options_key)
