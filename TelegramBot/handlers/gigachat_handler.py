@@ -3,7 +3,7 @@ import aiohttp
 from typing import Dict, Any, Callable, Awaitable
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
+import re
 from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from logic.action_handlers.biological import handle_get_description, handle_get_picture
@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 ActionHandler = Callable[[Dict[str, Any], str, str], Awaitable[list]]
 CallbackHandler = Callable[[types.CallbackQuery], Awaitable[None]]
+
+class FakeCallbackQuery:
+    def __init__(self, message: types.Message, data: str):
+        self.message = message
+        self.data = data
+        self.from_user = message.from_user
+    async def answer(self, *args, **kwargs):
+        pass
 
 class GigaChatHandler:
     def __init__(self, qa: QueryAnalyzer, dialogue_manager: DialogueManager, session: aiohttp.ClientSession):
@@ -45,25 +53,71 @@ class GigaChatHandler:
             "fallback": self._handle_fallback,
         }
 
+    def _clean_text_for_comparison(self, text: str) -> str:
+        if not text:
+            return ""
+        # Оставляем только буквы (русские и латинские), цифры и пробелы
+        cleaned_text = re.sub(r'[^a-zA-Zа-яА-Я0-9\s]', '', text)
+        # Заменяем несколько пробелов на один и убираем по краям
+        return ' '.join(cleaned_text.split()).lower()
+
     async def process_message(self, message: types.Message):
         """
         Главный обработчик текстовых сообщений. Анализирует, обогащает и диспетчеризует.
-        Теперь включает улучшенную логику fallback.
+        Теперь включает логику для обработки текстовых команд, дублирующих кнопки.
         """
         user_id, query = str(message.chat.id), message.text
         
         try:
-            await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+            # --- [НОВАЯ ЛОГИКА ПРОВЕРКИ ТЕКСТА НА КОМАНДУ-КНОПКУ] ---
             latest_history = await self.dialogue_manager.get_latest_history(user_id)
+            if latest_history:
+                # Ищем кнопки в ответе из последней записи истории
+                last_response = latest_history.get("response", [])
+                if last_response and last_response[0].get("buttons"):
+                    buttons_data = last_response[0]["buttons"]
+                    
+                    # Проходим по всем кнопкам и ищем совпадение по тексту
+                    for row in buttons_data:
+                        for button in row:
+                            clean_button_text = self._clean_text_for_comparison(button.get("text"))
+                            clean_query = self._clean_text_for_comparison(query)
+                            if clean_button_text and clean_button_text == clean_query:
+                                logger.info(f"[{user_id}] Текстовая команда '{query}' распознана как кнопка.")
+                                
+                                callback_data = button.get("callback_data")
+                                if not callback_data:
+                                    continue # Пропускаем кнопки-ссылки (у них нет callback_data)
+
+                                # Создаем "фальшивый" callback query
+                                fake_cq = FakeCallbackQuery(message=message, data=callback_data)
+                                
+                                # Находим и вызываем нужный обработчик для этой кнопки
+                                prefix = callback_data.split(':', 1)[0]
+                                handler = self.callback_handlers.get(prefix)
+                                
+                                if handler:
+                                    logger.info(f"[{user_id}] Вызываем обработчик {handler.__name__} для текстовой команды.")
+                                    await handler(fake_cq)
+                                    return # Важно! Прекращаем дальнейшую обработку.
+            # --- [КОНЕЦ НОВОЙ ЛОГИКИ] ---
+
+            # Если код дошел до сюда, значит, это обычное текстовое сообщение, а не команда-кнопка.
+            # Запускаем стандартный процесс обработки.
+            
+            await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+            
+            # Анализируем текущий запрос (с учетом истории для LLM)
             analysis = await self.qa.analyze_query(query, history=latest_history)
             if not analysis:
                 await self._reply_with_error(message, f"QueryAnalyzer не вернул анализ для запроса: '{query}'")
                 return
 
+            # Обогащаем результат анализа (для случаев "а осенью?")
             final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis)
+            
             action = final_analysis.get("action")
-
-            handler = None 
+            handler = None
             if action and action != "unknown":
                 primary_entity_type = final_analysis.get("primary_entity", {}).get("type", "ANY")
                 handler = self.action_handlers.get((action, primary_entity_type))
@@ -75,18 +129,11 @@ class GigaChatHandler:
 
             if not handler:
                 unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\"")
-
-                fallback_keyboard = types.InlineKeyboardMarkup()
-                fallback_keyboard.add(
-                    types.InlineKeyboardButton(
-                        text="💡 Начать поиск с подсказками",
-                        switch_inline_query_current_chat=""
-                    )
+                fallback_keyboard = types.InlineKeyboardMarkup().add(
+                    types.InlineKeyboardButton(text="💡 Начать поиск с подсказками", switch_inline_query_current_chat="")
                 )
-                
                 await message.answer(
-                    "К сожалению, я не смог распознать ваш запрос. "
-                    "Попробуйте использовать быстрый поиск с автодополнением, чтобы найти то, что вам нужно.",
+                    "К сожалению, я не смог распознать ваш запрос. Попробуйте использовать быстрый поиск с автодополнением.",
                     reply_markup=fallback_keyboard
                 )
                 return
@@ -105,12 +152,14 @@ class GigaChatHandler:
             responses = await handler(**args_to_pass)
             
             await self._send_responses(message, responses)
+            
+            # Сохраняем историю в Redis
             await self.dialogue_manager.update_history(user_id, query, final_analysis, responses)
             
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в GigaChatHandler.process_message: {e}", exc_info=True)
             await message.answer("Ой, что-то пошло не так на моей стороне.")
-
+            
     async def process_callback(self, callback_query: types.CallbackQuery):
         """Главный обработчик кнопок. Находит нужный обработчик и передает ему управление."""
         user_id, data = str(callback_query.from_user.id), callback_query.data
@@ -206,41 +255,52 @@ class GigaChatHandler:
 
     async def _handle_exploration(self, cq: types.CallbackQuery):
         """
-        Обрабатывает нажатие на кнопки "Умный обзор" или "Полный список"
-        для исследования объектов в определенной локации.
+        Обрабатывает нажатие на кнопки "Умный обзор" или "Полный список".
+        Может быть вызван как через настоящий CallbackQuery, так и через наш FakeCallbackQuery.
         """
-        await cq.answer("Загружаю данные...")
-        await cq.message.edit_reply_markup(reply_markup=None)
+        # [ИСПРАВЛЕНИЕ]
+        # Проверяем, настоящий ли это CallbackQuery. Только у него есть атрибут `id`.
+        # Наш FakeCallbackQuery его не имеет.
+        is_real_callback = isinstance(cq, types.CallbackQuery)
+
+        if is_real_callback:
+            # Если это настоящее нажатие кнопки, подтверждаем его и убираем клавиатуру.
+            await cq.answer("Загружаю данные...")
+            await cq.message.edit_reply_markup(reply_markup=None)
+        # Если это FakeCallbackQuery (вызов через текст), мы ничего из этого не делаем.
         
-        user_id = str(cq.from_user.id) # Получаем ID пользователя
+        user_id = str(cq.from_user.id)
         _, action, geo_place = cq.data.split(':', 2)
         
         url = f"{API_URLS['objects_in_polygon']}?debug_mode=false"
         payload = {"name": geo_place, "buffer_radius_km": 5}
         
+        # Мы используем cq.message, которое есть и в настоящем, и в "фальшивом" объекте,
+        # чтобы отправить ответ в нужный чат.
+        message_to_reply = cq.message
+
         async with self.session.post(url, json=payload) as resp:
             if not resp.ok:
-                await cq.message.answer("Не удалось получить данные о локации.")
+                await message_to_reply.answer("Не удалось получить данные о локации.")
                 return
             api_data = await resp.json()
             objects_list = api_data.get("all_biological_names", [])
 
         if not objects_list:
-            await cq.message.answer(f"В районе «{geo_place}» не найдено объектов для обзора.")
+            await message_to_reply.answer(f"В районе «{geo_place}» не найдено объектов для обзора.")
             return
 
-        # Готовим переменные для сохранения в историю
         simulated_query = f"Пользователь выбрал '{action}' для локации '{geo_place}'"
         simulated_analysis = {"action": "list_items", "primary_entity": None, "secondary_entity": {"name": geo_place, "type": "GeoPlace"}}
         response_to_save = []
         
         if action == "full_list":
             text = f"📋 **Все объекты в районе «{geo_place}»**:\n\n" + "• " + "\n• ".join(objects_list)
-            await send_long_message(cq.message, text, parse_mode="Markdown")
-            response_to_save.append({"type": "text", "content": text}) # Готовим ответ для истории
+            await send_long_message(message_to_reply, text, parse_mode="Markdown")
+            response_to_save.append({"type": "text", "content": text})
         
         elif action == "overview":
-            await cq.message.answer("Минутку, готовлю умный обзор...")
+            await message_to_reply.answer("Минутку, готовлю умный обзор...")
             analysis = await self.qa.analyze_location_objects(geo_place, objects_list)
             
             text = f"🌿 **{geo_place}**\n\n{analysis['statistics']}\n\n"
@@ -248,19 +308,17 @@ class GigaChatHandler:
                 text += "🎯 **Самые интересные:**\n"
                 for item in analysis['interesting_objects']:
                     text += f"• **{item['name']}** - {item['reason']}\n"
-            await send_long_message(cq.message, text, parse_mode="Markdown")
-            response_to_save.append({"type": "text", "content": text}) # Готовим ответ для истории
+            await send_long_message(message_to_reply, text, parse_mode="Markdown")
+            response_to_save.append({"type": "text", "content": text})
 
-        # --- [ИСПРАВЛЕНИЕ] ---
-        # Обновляем историю диалога ПОСЛЕ того, как отправили пользователю список.
-        # Это ключевой шаг, который сохранит список в контексте для следующего запроса.
         if response_to_save:
             await self.dialogue_manager.update_history(user_id, simulated_query, simulated_analysis, response_to_save)
-        # --- [КОНЕЦ ИСПРАВЛЕНИЯ] ---
-    
+                
     async def _handle_fallback(self, cq: types.CallbackQuery):
-        await cq.message.edit_reply_markup(reply_markup=None)
-        await cq.answer("Ищу упрощенный вариант...")
+        is_real_callback = isinstance(cq, types.CallbackQuery)
+        if is_real_callback:
+            await cq.message.edit_reply_markup(reply_markup=None)
+            await cq.answer("Ищу упрощенный вариант...")
         
         user_id = str(cq.from_user.id)
         _, fallback_type, object_nom = cq.data.split(':', 2)
@@ -300,7 +358,9 @@ class GigaChatHandler:
     
     async def _handle_clarify_by_index(self, cq: types.CallbackQuery):
         """Обрабатывает выбор уточнения по индексу из списка в Redis."""
-        await cq.message.edit_reply_markup(reply_markup=None)
+        is_real_callback = isinstance(cq, types.CallbackQuery)
+        if is_real_callback:
+            await cq.message.edit_reply_markup(reply_markup=None)
         user_id = str(cq.from_user.id)
         
         try:
