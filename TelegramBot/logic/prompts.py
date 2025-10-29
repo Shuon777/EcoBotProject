@@ -456,7 +456,12 @@ JSON
 Запрос: "А расскажи про нее"
 Результат:
 {{"action": "describe", "primary_entity": null, "secondary_entity": null, "attributes": {{}}}}
-             
+
+Запрос: "Где обитает эдельвейс около култука"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "эдельвейс", "type": "Biological"}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace"}}, "attributes": {{}} }}
+               
+
 Запрос: "Расскажи про байкальскую нерпу"
 Результат:  
 {{"action": "describe", "primary_entity": {{ "name": "байкальская нерпа", "type": "Biological" }}, "secondary_entity": null, "attributes": {{}} }}

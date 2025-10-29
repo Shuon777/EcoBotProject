@@ -37,9 +37,12 @@ API_URLS = {
     "ask_ecobot": f"{ECOBOT_API_BASE_URL}/api/ask",
     "find_species_with_description": f"{ECOBOT_API_BASE_URL}/api/find_species_with_description",
     "find_geo_special_description": f"{ECOBOT_API_BASE_URL}/object/description/",
-    "show_map_infrastructure": f"{ECOBOT_API_BASE_URL}/objects_in_area_by_type"
+    "show_map_infrastructure": f"{ECOBOT_API_BASE_URL}/objects_in_area_by_type",
+    "stand_endpoint": "http://iigor.ru/scripts/sights_ii.jsp"
 }
 
+STAND_SECRET_KEY = get_env_var("STAND_SECRET_KEY", "stand_test_7xAk92nMq4pL8tR1wY3z")
+STAND_SESSION_TIMEOUT = 900
 # --- Таймауты ---
 DEFAULT_TIMEOUT = 25
 GIGACHAT_TIMEOUT = 50

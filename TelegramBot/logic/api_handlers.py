@@ -5,10 +5,11 @@ import asyncio
 import logging
 import base64
 import json
+import time
 from typing import Dict, Any, List
 from urllib.parse import quote
-from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
-from utils.settings_manager import get_user_settings
+from config import API_URLS, STAND_SECRET_KEY, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL, STAND_SESSION_TIMEOUT
+from utils.settings_manager import get_user_settings, update_user_settings
 from utils.context_manager import RedisContextManager
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
 from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP
@@ -418,11 +419,12 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
         return [{"type": "text", "content": "Недостаточно данных для поиска: нужен и объект, и место."}]
 
     try:
+        logger.info(f"Обращение к get_coords с payload - name: {geo_nom}")
         async with session.post(API_URLS["get_coords"], json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok: return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
             coords = await resp.json()
-
-        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 35, "species_name": object_nom, "object_type": "geographical_entity"}
+        logger.info(f"Ответ от get_coords - {coords}")
+        payload = {"latitude": coords.get("latitude"), "longitude": coords.get("longitude"), "radius_km": 50, "species_name": object_nom, "object_type": "geographical_entity"}
         return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode, geo_nom)
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
@@ -436,44 +438,41 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
     payload = {"latitude": 53.27612, "longitude": 107.3274, "radius_km": 500000, "species_name": object_nom, "object_type": "geographical_entity"}
     return await _get_map_from_api(session, API_URLS["coords_to_map"], payload, object_nom, debug_mode)
 
-async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
-    """Обрабатывает запросы на отображение инфраструктуры на карте, различая поиск по типу и по имени."""
+async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
+    """
+    Обрабатывает запросы на отображение инфраструктуры на карте.
+    - Основная логика: вызывает API бэкенда, получает данные и формирует ответ для пользователя (карту или текст).
+    - Дополнительная логика: если пользователь пришел со стенда (флаг on_stand), извлекает external_id из ответа 
+      основного API и отправляет их на отдельный эндпоинт стенда.
+    """
     
-    # --- НАЧАЛО НОВОГО, ИСПРАВЛЕННОГО БЛОКА ---
-    
+    # --- [СУЩЕСТВУЮЩАЯ ЛОГИКА 1/3: Подготовка запроса к основному API] ---
     primary_entity = analysis.get("primary_entity") or {}
     secondary_entity = analysis.get("secondary_entity") or {}
 
     raw_object_name = primary_entity.get("name")
-    area_name = secondary_entity.get("name", "") # Безопасно получаем area_name
+    area_name = secondary_entity.get("name", "")
 
     if not raw_object_name:
         return [{"type": "text", "content": "Не смог определить, что нужно найти на карте."}]
 
-    # 1. Определяем, это поиск по типу или по конкретному имени
-    # Если нормализованное имя есть в нашем словаре ENTITY_MAP, значит, это поиск по ТИПУ.
     normalized_type = normalize_entity_name_for_maps(raw_object_name)
     is_specific_name_search = normalized_type not in ENTITY_MAP.values()
 
-    # 2. Формируем payload в зависимости от типа поиска
     payload = {"limit": 10}
     if is_specific_name_search:
-        # Это поиск конкретного объекта по имени
         payload["object_name"] = raw_object_name
         if area_name:
             payload["area_name"] = area_name
         logger.info(f"Режим поиска: по имени. Payload: {payload}")
     else:
-        # Это поиск по типу объекта
         payload["object_type"] = normalized_type
         if not area_name:
-            # Для поиска по типу ОБЯЗАТЕЛЬНО нужно место
              return [{"type": "text", "content": f"Пожалуйста, уточните, где вы хотите найти '{raw_object_name}'?"}]
         payload["area_name"] = area_name
         logger.info(f"Режим поиска: по типу. Payload: {payload}")
-
-    # --- КОНЕЦ НОВОГО БЛОКА ---
-
+    
+    # --- [ОСНОВНОЙ БЛОК TRY...EXCEPT для всей операции] ---
     try:
         url = f"{API_URLS['show_map_infrastructure']}?debug_mode={str(debug_mode).lower()}"
         logger.info(f"Запрос к API инфраструктуры: {url} с payload: {payload}")
@@ -482,7 +481,6 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
             content_type = resp.headers.get('Content-Type', '').lower()
             
             if 'application/json' not in content_type:
-                text_response = await resp.text()
                 logger.error(f"API инфраструктуры вернул не JSON. Status: {resp.status}, Content-Type: {content_type}")
                 if resp.status == 404: return [{"type": "text", "content": f"Сервис поиска временно недоступен."}]
                 elif resp.status == 500: return [{"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."}]
@@ -490,6 +488,58 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
 
             data = await resp.json()
             
+            # --- [НОВАЯ ЛОГИКА: Отправка данных на эндпоинт стенда] ---
+            # Этот блок выполняется ПОСЛЕ получения ответа от основного API, но ДО формирования ответа пользователю.
+            user_settings = get_user_settings(user_id)
+            is_stand_session_active = False
+            if user_settings.get("on_stand"):
+                last_active_time = user_settings.get("stand_last_active", 0)
+                time_elapsed = time.time() - last_active_time
+            
+                if time_elapsed < STAND_SESSION_TIMEOUT:
+                    # Сессия активна, продлеваем ее
+                    is_stand_session_active = True
+                    update_user_settings(user_id, {"stand_last_active": time.time()})
+                    logger.info(f"[{user_id}] Сессия 'у стенда' активна и продлена.")
+                else:
+                    # Сессия истекла, сбрасываем флаг
+                    update_user_settings(user_id, {"on_stand": False, "stand_last_active": None})
+                    logger.info(f"[{user_id}] Сессия 'у стенда' истекла по таймауту. Флаг сброшен.")
+            if is_stand_session_active:
+                logger.info(f"[{user_id}] Пользователь со стенда. Запускаем дополнительную логику.")
+                
+                # 1. Безопасно извлекаем ID из ответа основного API
+                external_ids = []
+                if "objects" in data and isinstance(data["objects"], list):
+                    for obj in data["objects"]:
+                        if isinstance(obj, dict) and obj.get("external_id"):
+                            external_ids.append(obj["external_id"])
+
+                # 2. Если есть ID, отправляем их на второй эндпоинт
+                if external_ids:
+                    logger.info(f"[{user_id}] Найдено {len(external_ids)} external_id для отправки: {external_ids}")
+                    stand_payload = {
+                        "items": [{"id": ext_id} for ext_id in external_ids],
+                        "secret_key": STAND_SECRET_KEY
+                    }
+                    
+                    # 3. Отправляем запрос (в отдельном try...except, чтобы не сломать основной ответ)
+                    try:
+                        stand_url = API_URLS['stand_endpoint']
+                        async with session.post(stand_url, json=stand_payload, timeout=10) as stand_resp:
+                            if stand_resp.ok:
+                                logger.info(f"[{user_id}] Данные успешно отправлены на эндпоинт стенда. Статус: {stand_resp.status}")
+                            else:
+                                stand_text = await stand_resp.text()
+                                logger.warning(f"[{user_id}] Эндпоинт стенда вернул ошибку {stand_resp.status}: {stand_text}")
+                    except Exception as e:
+                        logger.error(f"[{user_id}] Ошибка при отправке данных на эндпоинт стенда: {e}", exc_info=True)
+                else:
+                    logger.info(f"[{user_id}] В ответе основного API не найдено 'external_id'. Дополнительный запрос не выполняется.")
+            # --- [КОНЕЦ НОВОЙ ЛОГИКИ] ---
+
+            # --- [СУЩЕСТВУЮЩАЯ ЛОГИКА 2/3: Формирование ответа для пользователя] ---
+            # Эта часть использует `data` от основного API для генерации ответа пользователю и остается без изменений.
             if not resp.ok:
                 error_msg = data.get('error', f'Ошибка {resp.status}')
                 logger.error(f"API инфраструктуры вернул ошибку: {error_msg}")
@@ -497,13 +547,11 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
 
             if data.get("static_map") and data.get("interactive_map"):
                 caption = data.get("answer", f"Результаты по вашему запросу на карте.")
-                # Кодируем URL перед отправкой
                 base_url = "https://testecobot.ru/maps/"
                 static_filename = data["static_map"].replace(base_url, "")
                 interactive_filename = data["interactive_map"].replace(base_url, "")
                 s_encoded = base_url + quote(static_filename)
                 i_encoded = base_url + quote(interactive_filename)
-
                 return [{"type": "map", "static": s_encoded, "interactive": i_encoded, "caption": caption}]
             else:
                 text_response = data.get("answer", "По вашему запросу ничего не найдено.")
@@ -513,13 +561,14 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
                         text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
                 return [{"type": "text", "content": text_response}]
 
+    # --- [СУЩЕСТВУЮЩАЯ ЛОГИКА 3/3: Обработка ошибок] ---
     except asyncio.TimeoutError:
         logger.error(f"Таймаут при запросе к API инфраструктуры")
         return [{"type": "text", "content": "Сервер инфраструктуры не отвечает. Попробуйте позже."}]
     except Exception as e:
         logger.error(f"Критическая ошибка в handle_draw_map_of_infrastructure: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."}]
-            
+
 async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     if not geo_nom:
@@ -582,6 +631,7 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
         return [{"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."}]
     
 async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    # --- [НАЧАЛО ВАШЕГО ОРИГИНАЛЬНОГО КОДА] ---
     primary_entity = analysis.get("primary_entity") or {}
     secondary_entity = analysis.get("secondary_entity") or {}
 
@@ -601,18 +651,15 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
         else:
             specific_types_list = [canonical_entity_name]
     
-    # Определяем отношение к Байкалу с помощью отдельного модуля
     baikal_relation = determine_baikal_relation(
         query=original_query,
         entity_name=primary_entity.get("name", ""),
         entity_type=primary_entity.get("type", "")
     )
     
-    # Формируем location_info в зависимости от контекста
     location_info = {"nearby_places": []}
     
     if baikal_relation:
-        # Если запрос связан с Байкалом, передаем конкретное местоположение только если оно не Байкал
         import re
         baikal_pattern = re.compile(r'байкал?[а-я]*')
         if location_name and not baikal_pattern.search(location_name.lower()):
@@ -622,7 +669,6 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
             location_info["exact_location"] = ""
             location_info["region"] = ""
     else:
-        # Обычный запрос без отношения к Байкалу
         location_info["exact_location"] = location_name
         location_info["region"] = ""
     
@@ -636,7 +682,6 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
         "geo_type": geo_type_payload
     }
     
-    # Добавляем baikal_relation в payload только если он определен
     if baikal_relation:
         payload["baikal_relation"] = baikal_relation
     
@@ -649,6 +694,53 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()
+
+            # --- [НОВАЯ ЛОГИКА ДЛЯ СТЕНДА - ВСТАВЛЕНА ЗДЕСЬ] ---
+            user_settings = get_user_settings(user_id)
+            is_stand_session_active = False
+            if user_settings.get("on_stand"):
+                last_active_time = user_settings.get("stand_last_active", 0)
+                time_elapsed = time.time() - last_active_time
+                
+                if time_elapsed < STAND_SESSION_TIMEOUT:
+                    # Сессия активна, продлеваем ее
+                    is_stand_session_active = True
+                    update_user_settings(user_id, {"stand_last_active": time.time()})
+                    logger.info(f"[{user_id}] Сессия 'у стенда' активна и продлена.")
+                else:
+                    # Сессия истекла, сбрасываем флаг
+                    update_user_settings(user_id, {"on_stand": False, "stand_last_active": None})
+                    logger.info(f"[{user_id}] Сессия 'у стенда' истекла по таймауту. Флаг сброшен.")
+            if is_stand_session_active:
+                logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
+                
+                # Извлекаем external_id из данных, полученных от основного API
+                external_ids = []
+                if "external_ids" in data and isinstance(data.get("external_ids"), list):
+                    # Просто забираем готовый список из ответа
+                    external_ids = data["external_ids"]
+                
+                if external_ids:
+                    logger.info(f"[{user_id}] Найдено {len(external_ids)} external_id для отправки: {external_ids}")
+                    stand_payload = {
+                        "items": [{"id": ext_id} for ext_id in external_ids],
+                        "secret_key": STAND_SECRET_KEY
+                    }
+                    try:
+                        stand_url = API_URLS['stand_endpoint']
+                        async with session.post(stand_url, json=stand_payload, timeout=10) as stand_resp:
+                            if stand_resp.ok:
+                                logger.info(f"[{user_id}] Данные успешно отправлены на эндпоинт стенда. Статус: {stand_resp.status}")
+                            else:
+                                stand_text = await stand_resp.text()
+                                logger.warning(f"[{user_id}] Эндпоинт стенда вернул ошибку {stand_resp.status}: {stand_text}")
+                    except Exception as e:
+                        logger.error(f"[{user_id}] Ошибка при отправке данных на эндпоинт стенда: {e}", exc_info=True)
+                else:
+                    logger.info(f"[{user_id}] В ответе API find_geo_special_description не найдено 'external_id' в meta_info. Дополнительный запрос не выполняется.")
+            # --- [КОНЕЦ НОВОЙ ЛОГИКИ] ---
+
+            # --- [ПРОДОЛЖЕНИЕ ВАШЕГО ОРИГИНАЛЬНОГО КОДА] ---
             final_responses = []
 
             gigachat_answer = data.get("gigachat_answer")
@@ -680,7 +772,6 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                         full_title_message = f"Также могут быть интересны:\n{title_list_str}"
                         final_responses.append({"type": "text", "content": full_title_message})
 
-            # Если после всех проверок ответов нет, возвращаем сообщение по умолчанию
             if not final_responses:
                  final_responses.append({"type": "text", "content": "К сожалению, по вашему запросу ничего не найдено."})
 
@@ -689,7 +780,8 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
-                               
+ 
+
 async def _update_geo_context(user_id: str, result: dict, original_query: str):
     """Сохраняет географические сущности в контекст пользователя"""
     try:
