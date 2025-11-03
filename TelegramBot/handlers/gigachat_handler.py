@@ -192,7 +192,7 @@ class GigaChatHandler:
                     await message.answer(resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
                 break # После clarification другие сообщения не шлем
             elif response_type == "text":
-                await send_long_message(message, resp_data["content"], parse_mode=resp_data.get("parse_mode"))
+                await send_long_message(message, resp_data["content"], parse_mode="Markdown")
             elif response_type == "image":
                 await message.answer_photo(resp_data["content"])
             elif response_type == "map":

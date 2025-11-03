@@ -2,20 +2,29 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# --- НАЧАЛО ИЗМЕНЕНИЙ ---
-
-# 1. Определяем канонические названия для ГРУПП
-PROTECTED_AREAS = "Природоохранные территории"
-
-# 2. Создаем новый словарь, который "раскрывает" группы в списки
-GROUP_ENTITY_MAP = {
-    PROTECTED_AREAS: ["Заповедники", "Заказники"],
-    # Сюда можно будет добавлять другие группы в будущем
+GENERAL_CATEGORIES = {
+    "достопримечательности",
+    "научные учреждения", 
+    "научные центры",
+    "институты", 
+    "музеи",
+    "памятники",
+    "памятник",
+    "заповедники", 
+    "заповедник",
+    "заказники",
+    "заказник",
+    "заповедные места",
+    "природоохранные территории"
 }
 
-# 3. Обновляем основной ENTITY_MAP, чтобы синонимы ссылались на НАЗВАНИЕ ГРУППЫ
+PROTECTED_AREAS = "Природоохранные территории"
+
+GROUP_ENTITY_MAP = {
+    PROTECTED_AREAS: ["Заповедники", "Заказники"],
+}
+
 ENTITY_MAP = {
-    # Синонимы для "всех достопримечательностей", возвращают None
     "достопримечательности": "",
     "интересное место": "",
     "что интересного": "",
@@ -31,7 +40,7 @@ ENTITY_MAP = {
     "музеи": "Музеи",
     "музей": "Музеи",
     "байкальский музей": "Музеи",
-    "Байкальский музей":"Музеи",
+    "байкальский музей со ран": "Музеи",
 
     # Синонимы для "Памятники"
     "памятники": "Памятники",
@@ -50,7 +59,11 @@ ENTITY_MAP = {
     "природоохранные территории": PROTECTED_AREAS,
 }
 
-# --- КОНЕЦ ИЗМЕНЕНИЙ ---
+def should_include_object_name(entity_name: str) -> bool:
+    """Нужно ли передавать object_name в запрос"""
+    if not entity_name:
+        return False
+    return entity_name.lower() not in GENERAL_CATEGORIES
 
 def normalize_entity_name(raw_name: str) -> str | None:
     """
@@ -64,7 +77,7 @@ def normalize_entity_name(raw_name: str) -> str | None:
     if raw_name_lower in ENTITY_MAP:
         normalized_name = ENTITY_MAP[raw_name_lower]
         if normalized_name:
-             logger.debug(f"Сущность '{raw_name}' нормализована в '{normalized_name}'")
+             logger.info(f"Сущность '{raw_name}' нормализована в '{normalized_name}'")
         return normalized_name
     else:
         logger.warning(f"Для сущности '{raw_name}' не найдено правило нормализации. Используется исходное значение.")

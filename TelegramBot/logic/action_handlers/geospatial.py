@@ -7,7 +7,7 @@ from urllib.parse import quote
 from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, STAND_SESSION_TIMEOUT
 from utils.settings_manager import get_user_settings, update_user_settings
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
-from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP
+from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
 
 logger = logging.getLogger(__name__)
@@ -288,12 +288,16 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     if baikal_relation:
         payload["baikal_relation"] = baikal_relation
     
-    url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
-    logger.info(f"Запрос к `find_geo_special_description` с payload: {payload}")
+    if should_include_object_name(raw_entity_name):
+        url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
+    else:
+        url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
     
+    logger.info(f"Запрос к {url} с payload: {payload}")
     try:
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
+                logger.warning(f"Запрос к /object/description прошел с ошибкой - {resp.status}")
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()

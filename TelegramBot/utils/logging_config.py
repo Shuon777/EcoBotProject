@@ -30,21 +30,12 @@ def setup_logging():
     )
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
-    # --- Конец основного логгера ---
-
-    # --- НАЧАЛО НОВОГО БЛОКА ---
-    # Создаем и настраиваем специальный логгер для нераспознанных запросов
     unhandled_logger = logging.getLogger("unhandled")
     unhandled_logger.setLevel(logging.INFO)
-    unhandled_logger.propagate = False # Важно! Чтобы сообщения не дублировались в root_logger
-    
-    # Формат для этого логгера будет проще: только дата и сообщение
+    unhandled_logger.propagate = False
     unhandled_formatter = logging.Formatter('%(asctime)s - %(message)s')
     
     unhandled_file_handler = logging.FileHandler(UNHANDLED_QUERIES_LOG_PATH, encoding='utf-8')
     unhandled_file_handler.setFormatter(unhandled_formatter)
     unhandled_logger.addHandler(unhandled_file_handler)
-    # --- КОНЕЦ НОВОГО БЛОКА ---
-
-    logging.info("Логирование настроено для вывода в консоль и в файл.")
     logging.info(f"Нераспознанные запросы будут сохраняться в: {UNHANDLED_QUERIES_LOG_PATH}")
