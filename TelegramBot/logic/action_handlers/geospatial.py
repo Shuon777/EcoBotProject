@@ -9,6 +9,7 @@ from utils.settings_manager import get_user_settings, update_user_settings
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
 from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
+from logic.stand_manager import is_stand_session_active
 
 logger = logging.getLogger(__name__)
 
@@ -110,20 +111,7 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
 
             data = await resp.json()
 
-            user_settings = get_user_settings(user_id)
-            is_stand_session_active = False
-            if user_settings.get("on_stand"):
-                last_active_time = user_settings.get("stand_last_active", 0)
-                time_elapsed = time.time() - last_active_time
-            
-                if time_elapsed < STAND_SESSION_TIMEOUT:
-                    is_stand_session_active = True
-                    update_user_settings(user_id, {"stand_last_active": time.time()})
-                    logger.info(f"[{user_id}] Сессия 'у стенда' активна и продлена.")
-                else:
-                    update_user_settings(user_id, {"on_stand": False, "stand_last_active": None})
-                    logger.info(f"[{user_id}] Сессия 'у стенда' истекла по таймауту. Флаг сброшен.")
-            if is_stand_session_active:
+            if is_stand_session_active(user_id):
                 logger.info(f"[{user_id}] Пользователь со стенда. Запускаем дополнительную логику.")
                 
                 external_ids = []
@@ -301,20 +289,7 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                 return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
             
             data = await resp.json()
-            user_settings = get_user_settings(user_id)
-            is_stand_session_active = False
-            if user_settings.get("on_stand"):
-                last_active_time = user_settings.get("stand_last_active", 0)
-                time_elapsed = time.time() - last_active_time
-                
-                if time_elapsed < STAND_SESSION_TIMEOUT:
-                    is_stand_session_active = True
-                    update_user_settings(user_id, {"stand_last_active": time.time()})
-                    logger.info(f"[{user_id}] Сессия 'у стенда' активна и продлена.")
-                else:
-                    update_user_settings(user_id, {"on_stand": False, "stand_last_active": None})
-                    logger.info(f"[{user_id}] Сессия 'у стенда' истекла по таймауту. Флаг сброшен.")
-            if is_stand_session_active:
+            if is_stand_session_active(user_id):
                 logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
                 
                 external_ids = []

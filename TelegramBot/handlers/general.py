@@ -1,14 +1,14 @@
-# --- НАЧАЛО ФАЙЛА: handlers/general.py ---
+import logging
+import time
 
 from aiogram import Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from utils.settings_manager import get_user_settings, update_user_settings
-import logging
-import time
-# --- Постоянная клавиатура внизу экрана ---
-# Теперь она содержит только кнопку "Настройки" для простоты.
-# Основные действия будут вызываться через меню команд Telegram (/).
+from logic.stand_manager import start_stand_session, end_stand_session, is_stand_session_active
+from config import STAND_SESSION_TIMEOUT
+
+
 main_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 main_keyboard.add(types.KeyboardButton("⚙ Настройки"))
 
@@ -21,15 +21,11 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     user_settings = get_user_settings(user_id)
     current_mode = user_settings.get("mode", "rasa")
     fallback_enabled = user_settings.get("gigachat_fallback", False)
-    # --- [ИЗМЕНЕНИЕ] ---
-    # Получаем настройку стоп-листа, по умолчанию он включен (True)
     stoplist_enabled = user_settings.get("stoplist_enabled", True)
 
     rasa_button_text = "✅ Режим: Rasa" if current_mode == "rasa" else "Режим: Rasa"
     gigachat_button_text = "✅ Режим: GigaChat" if current_mode == "gigachat" else "Режим: GigaChat"
     fallback_status = "✅ Вкл" if fallback_enabled else "❌ Выкл"
-    # --- [ИЗМЕНЕНИЕ] ---
-    # Формируем текст для новой кнопки
     stoplist_status = "❌ Выкл" if stoplist_enabled else "✅ Вкл"
 
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -40,11 +36,11 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     keyboard.add(
         InlineKeyboardButton(f"Дополнять GigaChat: {fallback_status}", callback_data="toggle_fallback")
     )
-    # --- [ИЗМЕНЕНИЕ] ---
-    # Добавляем новую кнопку в клавиатуру
     keyboard.add(
         InlineKeyboardButton(f"Стоп-лист: {stoplist_status}", callback_data="toggle_stoplist")
     )
+    if is_stand_session_active(user_id):
+        keyboard.add(InlineKeyboardButton("❌ Отвязаться от стенда", callback_data="stand_detach"))
     return keyboard
 
 
@@ -60,47 +56,45 @@ def register_general_handlers(dp: Dispatcher):
         args = message.get_args()
 
         logger.info(f"[{user_id}] Запущена команда /start. Полученные аргументы (args): '{args}'")
-
-        # --- [ИСПРАВЛЕНИЕ] ---
-        # Определяем режим работы ВСЕГДА, в самом начале.
-        mode_name = "Rasa" if get_user_settings(user_id).get("mode", "rasa") == "rasa" else "GigaChat"
-
+        current_mode = get_user_settings(user_id).get("mode", "gigachat")
+        mode_name = "Rasa" if current_mode == "rasa" else "GigaChat"
         # --- Логика для deep link ---
         if args and args.startswith("stand_"):
-            update_user_settings(user_id, {
-            "on_stand": True,
-            "stand_last_active": time.time() 
-            })
+            session = Dispatcher.get_current().get('aiohttp_session')
+            await start_stand_session(user_id, message.bot, session)
+            session_minutes = STAND_SESSION_TIMEOUT // 60
             logger.info(f"[{user_id}] Начата сессия 'у стенда'. Флаг on_stand=True.")
 
-            # --- ВАРИАНТ 1: Специальное приветствие для стенда ---
             welcome_text = (
-                "Добро пожаловать со стенда! Я ваш персональный эко-ассистент по Байкалу. 🌿\n\n"
-                "Задайте мне любой вопрос о туристических объектах, и я постараюсь помочь."
+                f"✅ *Вы подключились к интерактивному стенду!* \n\n"
+                f"Сессия продлится *{session_minutes} минут*. В течение этого времени ответы на некоторые ваши запросы будут отображаться прямо на экране стенда.\n\n"
+                "✨ *В чем особенность?*\n"
+                "Просто спросите меня о достопримечательностях, и на большом экране отобразятся найденные объекты.\n\n"
+                "🔍 *Примеры запросов:*\n"
+                " • `Расскажи о музеях на Ольхоне`\n"
+                " • `Какие научные учреждения есть около Байкала?`\n"
+                " • `Покажи на карте музеи Иркутска`\n\n"
+                "Если захотите завершить сессию раньше, нажмите кнопку ниже."
             )
-            
-            # --- ВАРИАНТ 2: Стандартное приветствие (если хотите одинаковое для всех) ---
-            # Просто закомментируйте ВАРИАНТ 1 и раскомментируйте этот блок
-            # welcome_text = (
-            #     f"Здравствуйте! Я ваш эко-ассистент по Байкалу 🌿\n"
-            #     f"Текущий режим: *{mode_name}*.\n\n"
-            #     f"Для поиска с подсказками используйте команду /search из меню."
-            # )
-
+            stand_keyboard = InlineKeyboardMarkup().add(
+                InlineKeyboardButton("❌ Отвязаться от стенда", callback_data="stand_detach")
+            )
+            await message.answer(
+                welcome_text,
+                reply_markup=stand_keyboard, # <--- Используем локальную переменную
+                parse_mode="Markdown"
+            )
         else:
-            # --- Логика для обычного старта ---
             welcome_text = (
                 f"Здравствуйте! Я ваш эко-ассистент по Байкалу 🌿\n"
                 f"Текущий режим: *{mode_name}*.\n\n"
                 f"Для поиска с подсказками используйте команду /search из меню (иконка '/' слева от поля ввода)."
             )
-
-        # Отправляем итоговое сообщение
-        await message.answer(
-            welcome_text,
-            reply_markup=main_keyboard, # Убедитесь, что main_keyboard определена где-то выше
-            parse_mode="Markdown"
-        )
+            await message.answer(
+                welcome_text,
+                reply_markup=main_keyboard,
+                parse_mode="Markdown"
+            )
 
     # --- ОБРАБОТЧИК КОМАНДЫ /search ---
     @dp.message_handler(commands=["search"])
@@ -132,15 +126,23 @@ def register_general_handlers(dp: Dispatcher):
         )
         await message.answer(help_text, parse_mode="Markdown")
 
-    # --- ОБРАБОТЧИК КНОПКИ "Настройки" ---
     @dp.message_handler(lambda message: message.text == "⚙ Настройки")
     async def handle_settings(message: types.Message):
         user_id = str(message.from_user.id)
         keyboard = create_settings_keyboard(user_id)
         await message.answer("Меню настроек:", reply_markup=keyboard)
+    
+    @dp.callback_query_handler(lambda c: c.data == 'stand_detach')
+    async def handle_stand_detach(callback_query: types.CallbackQuery):
+        user_id = str(callback_query.from_user.id)
+        # Получаем сессию
+        session = Dispatcher.get_current().get('aiohttp_session')
+        await end_stand_session(user_id, session)
+        await callback_query.answer("Сессия со стендом завершена.")
+        await callback_query.message.edit_text(
+            "Вы успешно отвязались от стенда. Теперь все ответы будут приходить только сюда."
+        )
 
-    # --- [ИЗМЕНЕНИЕ] ---
-    # Добавляем 'toggle_stoplist' в список обрабатываемых колбэков
     @dp.callback_query_handler(lambda c: c.data in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback", "toggle_stoplist"])
     async def process_settings_callback(callback_query: types.CallbackQuery):
         user_id = str(callback_query.from_user.id)

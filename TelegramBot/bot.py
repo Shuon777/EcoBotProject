@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 async def on_startup(dispatcher):
     logger.info("Бот запускается...")
     
-    # [НОВОЕ] Создаем единую сессию aiohttp и сохраняем ее в диспетчере
     dispatcher['aiohttp_session'] = aiohttp.ClientSession()
     
     try:
@@ -34,10 +33,8 @@ async def on_startup(dispatcher):
             raise ConnectionError("Не удалось подключиться к Redis")
         dialogue_manager = DialogueManager(context_manager)
         
-        # [ИЗМЕНЕНО] Получаем сессию из диспетчера
         session = dispatcher['aiohttp_session']
-        
-        # [ИЗМЕНЕНО] Передаем единую сессию в конструкторы обработчиков
+
         gigachat_h = GigaChatHandler(qa, dialogue_manager, session)
         rasa_h = RasaHandler(session)
         
@@ -53,30 +50,26 @@ async def on_startup(dispatcher):
         
         @dispatcher.message_handler(content_types=types.ContentTypes.TEXT)
         async def handle_message_by_mode(message: types.Message):
-            # Игнорируем команды, чтобы они обрабатывались отдельно, если будут
             if message.text.startswith('/'):
                 return
-            mode = get_user_settings(str(message.from_user.id)).get("mode", "rasa")
+            mode = get_user_settings(str(message.from_user.id)).get("mode", "gigachat")
 
-            if mode == "gigachat":
-                await gigachat_h.process_message(message)
-            else:
+            if mode == "rasa":
                 await rasa_h.process_message(message)
+            else:
+                await gigachat_h.process_message(message)
         
         logger.info("Все обработчики успешно зарегистрированы.")
 
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}", exc_info=True)
 
-# [НОВОЕ] Добавляем функцию для корректного завершения работы
 async def on_shutdown(dispatcher):
     logger.info("Бот останавливается...")
-    # Закрываем сессию aiohttp
     await dispatcher['aiohttp_session'].close()
     logger.info("Aiohttp сессия закрыта.")
 
 if __name__ == '__main__':
-    # [ИЗМЕНЕНО] Передаем on_shutdown в executor
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
 
 # --- КОНЕЦ ФАЙЛА: bot.py ---
