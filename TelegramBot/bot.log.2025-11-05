@@ -1,0 +1,290 @@
+2025-11-05 06:31:42,215 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 06:31:42,223 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True, 'stand_last_active': 1762313502.2218544}
+2025-11-05 06:31:42,223 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 06:32:36,846 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Перечисли все природоохранные территории'
+2025-11-05 06:32:36,921 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2025-11-05 06:32:36,978 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 06:32:38,041 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 06:32:38,043 - logic.query_analyze - INFO - Запрос 'Перечисли все природоохранные территории' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "природоохранные территории", "type": "Infrastructure"}, "secondary_entity": null, "attributes": {}}
+2025-11-05 06:32:38,043 - logic.entity_normalizer - INFO - Сущность 'природоохранные территории' нормализована в 'Природоохранные территории'
+2025-11-05 06:32:38,043 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Перечисли все природоохранные территории&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Заповедники', 'Заказники']}}
+2025-11-05 06:32:42,033 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'stand_last_active': 1762313562.0326543}
+2025-11-05 06:32:42,033 - logic.action_handlers.geospatial - INFO - [684421969] Сессия 'у стенда' активна и продлена.
+2025-11-05 06:32:42,033 - logic.action_handlers.geospatial - INFO - [684421969] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.
+2025-11-05 06:32:42,033 - logic.action_handlers.geospatial - INFO - [684421969] Найдено 5 external_id для отправки: ['do205vjr', '6r1x416o', 'poq06qyr', '5r5nwxnr', '6rk6pj5z']
+2025-11-05 06:32:42,193 - logic.action_handlers.geospatial - INFO - [684421969] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 06:32:42,193 - logic.action_handlers.geospatial - INFO - Используем ответ от GigaChat.
+2025-11-05 06:32:42,370 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Перечисли все природоохранные территории'
+2025-11-05 06:42:34,717 - handlers.general - INFO - [286229727] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 06:42:34,719 - utils.settings_manager - INFO - Настройки для пользователя 286229727 обновлены: {'on_stand': True, 'stand_last_active': 1762314154.7186391}
+2025-11-05 06:42:34,719 - handlers.general - INFO - [286229727] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 06:43:53,996 - handlers.general - INFO - [1310942871] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 06:43:53,997 - utils.settings_manager - INFO - Настройки для пользователя 1310942871 обновлены: {'on_stand': True, 'stand_last_active': 1762314233.9974632}
+2025-11-05 06:43:53,998 - handlers.general - INFO - [1310942871] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 06:44:11,596 - handlers.general - INFO - [1310942871] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 06:44:11,597 - utils.settings_manager - INFO - Настройки для пользователя 1310942871 обновлены: {'on_stand': True, 'stand_last_active': 1762314251.5970745}
+2025-11-05 06:44:11,597 - handlers.general - INFO - [1310942871] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 06:45:19,913 - handlers.general - INFO - [286229727] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 06:45:19,914 - utils.settings_manager - INFO - Настройки для пользователя 286229727 обновлены: {'on_stand': True, 'stand_last_active': 1762314319.9143622}
+2025-11-05 06:45:19,914 - handlers.general - INFO - [286229727] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 06:45:28,507 - utils.settings_manager - INFO - Настройки для пользователя 286229727 обновлены: {'mode': 'gigachat'}
+2025-11-05 06:45:41,750 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Перечисли все природоохранные территории'
+2025-11-05 06:45:42,887 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 06:45:42,890 - logic.query_analyze - INFO - Запрос 'Перечисли все природоохранные территории' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "природоохранные территории", "type": "Infrastructure"}, "secondary_entity": null, "attributes": {}}
+2025-11-05 06:45:42,890 - logic.entity_normalizer - INFO - Сущность 'природоохранные территории' нормализована в 'Природоохранные территории'
+2025-11-05 06:45:42,891 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Перечисли все природоохранные территории&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Заповедники', 'Заказники']}}
+2025-11-05 06:45:46,732 - utils.settings_manager - INFO - Настройки для пользователя 286229727 обновлены: {'stand_last_active': 1762314346.7320387}
+2025-11-05 06:45:46,733 - logic.action_handlers.geospatial - INFO - [286229727] Сессия 'у стенда' активна и продлена.
+2025-11-05 06:45:46,733 - logic.action_handlers.geospatial - INFO - [286229727] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.
+2025-11-05 06:45:46,734 - logic.action_handlers.geospatial - INFO - [286229727] Найдено 5 external_id для отправки: ['do205vjr', '6r1x416o', 'poq06qyr', '5r5nwxnr', '6rk6pj5z']
+2025-11-05 06:45:46,879 - logic.action_handlers.geospatial - INFO - [286229727] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 06:45:46,879 - logic.action_handlers.geospatial - INFO - Используем ответ от GigaChat.
+2025-11-05 06:45:46,984 - logic.dialogue_manager - INFO - [286229727] Контекст сохранен. Query: 'Перечисли все природоохранные территории'
+2025-11-05 06:46:02,043 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Какие научные учреждения есть около Байкала?'
+2025-11-05 06:46:02,043 - logic.query_analyze - INFO - Используется контекст: ---
+Предыдущий диалог:
+- Запрос пользователя: "Перечисли все природоохранные территории"
+- Ответ бота: Природоохранные территории Байкальской природной территории:
+
+1. **Гора Омулёвка** — геологический памятник природы Бурятии.
+2. **Памятник природы гора Уран-Душэ** — расположена на стыке Закаменского района, Тункинского национального парка и Республики Монголия.
+3. **Байкало-Ленский государственный заповедник** — крупнейшая природоохранная зона на северо-западе Байкала.
+4. **Прибайкальский национальный парк** — охраняет прибрежную полосу западного берега Байкала длиной около 400 км.
+5. **«Ангирский» заказник** — старейший заказник региона, расположенный в Заиграевском районе, вблизи города Улан-Удэ.
+
+Итого перечислено пять основных природных территорий.
+---
+
+2025-11-05 06:46:03,758 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 06:46:03,760 - logic.query_analyze - INFO - Запрос 'Какие научные учреждения есть около Байкала?' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "научные учреждения", "type": "Infrastructure"}, "secondary_entity": {"name": "Байкал", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 06:46:03,760 - logic.entity_normalizer - INFO - Сущность 'научные учреждения' нормализована в 'Наука'
+2025-11-05 06:46:03,760 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Какие научные учреждения есть около Байкала?&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Наука']}, 'baikal_relation': 'рядом/около Байкала'}
+2025-11-05 06:46:04,091 - utils.settings_manager - INFO - Настройки для пользователя 286229727 обновлены: {'stand_last_active': 1762314364.0907888}
+2025-11-05 06:46:04,091 - logic.action_handlers.geospatial - INFO - [286229727] Сессия 'у стенда' активна и продлена.
+2025-11-05 06:46:04,091 - logic.action_handlers.geospatial - INFO - [286229727] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.
+2025-11-05 06:46:04,092 - logic.action_handlers.geospatial - INFO - [286229727] В ответе API find_geo_special_description не найдено 'external_id' в meta_info. Дополнительный запрос не выполняется.
+2025-11-05 06:46:04,092 - logic.action_handlers.geospatial - INFO - Ответ GigaChat отсутствует. Ищем в 'descriptions'.
+2025-11-05 06:46:04,417 - logic.dialogue_manager - INFO - [286229727] Контекст сохранен. Query: 'Какие научные учреждения есть около Байкала?'
+2025-11-05 06:48:32,259 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Какие заповедные места есть на Байкале?'
+2025-11-05 06:48:33,584 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 06:48:33,587 - logic.query_analyze - INFO - Запрос 'Какие заповедные места есть на Байкале?' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "заповедные места", "type": "Infrastructure"}, "secondary_entity": {"name": "Байкал", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 06:48:33,587 - logic.entity_normalizer - INFO - Сущность 'заповедные места' нормализована в 'Природоохранные территории'
+2025-11-05 06:48:33,587 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Какие заповедные места есть на Байкале?&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Заповедники', 'Заказники']}, 'baikal_relation': 'рядом/около Байкала'}
+2025-11-05 06:48:38,372 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': False, 'stand_last_active': None}
+2025-11-05 06:48:38,373 - logic.action_handlers.geospatial - INFO - [684421969] Сессия 'у стенда' истекла по таймауту. Флаг сброшен.
+2025-11-05 06:48:38,373 - logic.action_handlers.geospatial - INFO - Используем ответ от GigaChat.
+2025-11-05 06:48:38,536 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Какие заповедные места есть на Байкале?'
+2025-11-05 12:12:15,752 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 12:12:15,753 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True, 'stand_last_active': 1762333935.7532053}
+2025-11-05 12:12:15,754 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 12:12:46,128 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Какие заповедные места есть на Байкале?'
+2025-11-05 12:12:46,213 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2025-11-05 12:12:46,266 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 12:12:47,896 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 12:12:47,898 - logic.query_analyze - INFO - Запрос 'Какие заповедные места есть на Байкале?' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "заповедные места", "type": "Infrastructure"}, "secondary_entity": {"name": "Байкал", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 12:12:47,898 - logic.entity_normalizer - INFO - Сущность 'заповедные места' нормализована в 'Природоохранные территории'
+2025-11-05 12:12:47,898 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Какие заповедные места есть на Байкале?&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Заповедники', 'Заказники']}, 'baikal_relation': 'рядом/около Байкала'}
+2025-11-05 12:12:51,333 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'stand_last_active': 1762333971.3324544}
+2025-11-05 12:12:51,333 - logic.action_handlers.geospatial - INFO - [684421969] Сессия 'у стенда' активна и продлена.
+2025-11-05 12:12:51,333 - logic.action_handlers.geospatial - INFO - [684421969] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.
+2025-11-05 12:12:51,334 - logic.action_handlers.geospatial - INFO - [684421969] Найдено 5 external_id для отправки: ['do205vjr', '6r1x416o', 'poq06qyr', '5r5nwxnr', '6rk6pj5z']
+2025-11-05 12:12:51,479 - logic.action_handlers.geospatial - INFO - [684421969] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 12:12:51,480 - logic.action_handlers.geospatial - INFO - Используем ответ от GigaChat.
+2025-11-05 12:12:51,684 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Какие заповедные места есть на Байкале?'
+2025-11-05 12:47:33,365 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 12:47:33,515 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 12:47:33,670 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 12:47:33,671 - __main__ - INFO - Бот запускается...
+2025-11-05 12:47:33,794 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 12:47:33,795 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 12:47:33,798 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 12:47:33,806 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 12:47:33,807 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 12:47:51,821 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 12:47:51,823 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True}
+2025-11-05 12:47:51,823 - logic.stand_manager - INFO - [684421969] Сессия со стендом начата. Таймаут: 900 сек.
+2025-11-05 12:47:51,824 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 12:48:40,196 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Покажи на карте музеи Иркутска'
+2025-11-05 12:48:40,478 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 12:48:52,074 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 12:48:52,076 - logic.query_analyze - INFO - Запрос 'Покажи на карте музеи Иркутска' успешно проанализирован: {"action": "show_map", "primary_entity": {"name": "музеи", "type": "Infrastructure"}, "secondary_entity": {"name": "Иркутск", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 12:48:52,077 - logic.action_handlers.geospatial - INFO - Режим поиска: по типу. Payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 12:48:52,077 - logic.action_handlers.geospatial - INFO - Запрос к API инфраструктуры: https://testecobot.ru/objects_in_area_by_type?debug_mode=false с payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 12:48:56,030 - logic.action_handlers.geospatial - INFO - [684421969] Пользователь со стенда. Запускаем дополнительную логику.
+2025-11-05 12:48:56,031 - logic.action_handlers.geospatial - INFO - [684421969] Найдено 10 external_id для отправки: ['gzgkk8eo', 'wzl9897z', '6oevq3kz', '6r113qdr', 'do2j7j7z', 'poq7gd3z', '8rv9qp9o', '6ry9pvwo', '6oed4dkz', 'gzgjyl1z']
+2025-11-05 12:48:56,218 - logic.action_handlers.geospatial - INFO - [684421969] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 12:48:56,412 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Покажи на карте музеи Иркутска'
+2025-11-05 12:49:52,196 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': False}
+2025-11-05 12:49:52,198 - logic.stand_manager - INFO - [684421969] Сессия со стендом завершена вручную.
+2025-11-05 12:49:52,199 - logic.stand_manager - INFO - [684421969] Задача тайм-аута для стенда была отменена.
+2025-11-05 12:57:58,653 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 12:58:48,448 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 12:58:48,606 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 12:58:48,713 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 12:58:48,714 - __main__ - INFO - Бот запускается...
+2025-11-05 12:58:48,824 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 12:58:48,825 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 12:58:48,832 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 12:58:48,836 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 12:58:48,839 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 12:58:54,383 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 13:02:22,679 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 13:02:22,841 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 13:02:22,944 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 13:02:22,944 - __main__ - INFO - Бот запускается...
+2025-11-05 13:02:23,047 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 13:02:23,048 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 13:02:23,050 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 13:02:23,054 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 13:02:23,055 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 13:02:23,875 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 13:02:32,617 - asyncio - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-9' coro=<Dispatcher._process_polling_updates() done, defined at /var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py:410> exception=UnboundLocalError("local variable 'main_keyboard' referenced before assignment")>
+Traceback (most recent call last):
+  File "/var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 418, in _process_polling_updates
+    for responses in itertools.chain.from_iterable(await self.process_updates(updates, fast)):
+  File "/var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 236, in process_updates
+    return await asyncio.gather(*tasks)
+  File "/var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/handler.py", line 117, in notify
+    response = await handler_obj.handler(*args, **partial_data)
+  File "/var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 257, in process_update
+    return await self.message_handlers.notify(update.message)
+  File "/var/www/EcoBotProject/TelegramBot/.venv/lib/python3.10/site-packages/aiogram/dispatcher/handler.py", line 117, in notify
+    response = await handler_obj.handler(*args, **partial_data)
+  File "/var/www/EcoBotProject/TelegramBot/handlers/general.py", line 88, in handle_start
+    reply_markup=main_keyboard,
+UnboundLocalError: local variable 'main_keyboard' referenced before assignment
+2025-11-05 13:02:32,619 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 13:07:26,721 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 13:07:26,878 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 13:07:26,982 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 13:07:26,983 - __main__ - INFO - Бот запускается...
+2025-11-05 13:07:27,096 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 13:07:27,097 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 13:07:27,100 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 13:07:27,107 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 13:07:27,108 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 13:07:29,871 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 13:07:39,907 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 13:07:39,909 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True}
+2025-11-05 13:07:39,909 - logic.stand_manager - INFO - [684421969] Сессия со стендом начата. Таймаут: 300 сек.
+2025-11-05 13:07:39,909 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 13:07:49,422 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': False}
+2025-11-05 13:07:49,422 - logic.stand_manager - INFO - [684421969] Сессия со стендом завершена вручную.
+2025-11-05 13:07:49,494 - logic.stand_manager - INFO - [684421969] Задача тайм-аута для стенда была отменена.
+2025-11-05 13:07:50,905 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): ''
+2025-11-05 13:12:40,018 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 13:12:40,167 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 13:12:40,263 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 13:12:40,264 - __main__ - INFO - Бот запускается...
+2025-11-05 13:12:40,364 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 13:12:40,365 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 13:12:40,368 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 13:12:40,373 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 13:12:40,373 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 13:24:15,827 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 13:24:15,989 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 13:24:16,090 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 13:24:16,090 - __main__ - INFO - Бот запускается...
+2025-11-05 13:24:16,225 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 13:24:16,225 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 13:24:16,228 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 13:24:16,233 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 13:24:16,233 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 13:24:40,542 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 13:24:40,545 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True}
+2025-11-05 13:24:40,546 - logic.stand_manager - INFO - [684421969] Сессия со стендом начата. Таймаут: 300 сек.
+2025-11-05 13:24:40,546 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 13:24:49,082 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Покажи на карте музеи Иркутска'
+2025-11-05 13:24:49,280 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 13:24:51,076 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 13:24:51,079 - logic.query_analyze - INFO - Запрос 'Покажи на карте музеи Иркутска' успешно проанализирован: {"action": "show_map", "primary_entity": {"name": "музеи", "type": "Infrastructure"}, "secondary_entity": {"name": "Иркутск", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 13:24:51,080 - logic.action_handlers.geospatial - INFO - Режим поиска: по типу. Payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:24:51,080 - logic.action_handlers.geospatial - INFO - Запрос к API инфраструктуры: https://testecobot.ru/objects_in_area_by_type?debug_mode=false с payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:24:51,095 - logic.action_handlers.geospatial - INFO - [684421969] Пользователь со стенда. Запускаем дополнительную логику.
+2025-11-05 13:24:51,096 - logic.action_handlers.geospatial - INFO - [684421969] Найдено 10 external_id для отправки: ['gzgkk8eo', 'wzl9897z', '6oevq3kz', '6r113qdr', 'do2j7j7z', 'poq7gd3z', '8rv9qp9o', '6ry9pvwo', '6oed4dkz', 'gzgjyl1z']
+2025-11-05 13:24:51,246 - logic.action_handlers.geospatial - INFO - [684421969] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 13:24:51,337 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Покажи на карте музеи Иркутска'
+2025-11-05 13:24:55,717 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': False}
+2025-11-05 13:24:55,717 - logic.stand_manager - ERROR - Ошибка при отправке команды сброса на стенд: 'NoneType' object has no attribute 'post'
+Traceback (most recent call last):
+  File "/var/www/EcoBotProject/TelegramBot/logic/stand_manager.py", line 21, in _send_reset_to_stand
+    async with session.post(url, json=payload, timeout=10) as resp:
+AttributeError: 'NoneType' object has no attribute 'post'
+2025-11-05 13:24:55,718 - logic.stand_manager - INFO - [684421969] Сессия со стендом завершена вручную.
+2025-11-05 13:24:55,720 - logic.stand_manager - INFO - [684421969] Задача тайм-аута для стенда была отменена.
+2025-11-05 13:28:03,073 - root - INFO - Нераспознанные запросы будут сохраняться в: unhandled_queries.log
+2025-11-05 13:28:03,236 - aiogram - INFO - Bot: RasaTgBot [@RasaNewDBBot]
+2025-11-05 13:28:03,336 - aiogram - WARNING - Updates were skipped successfully.
+2025-11-05 13:28:03,336 - __main__ - INFO - Бот запускается...
+2025-11-05 13:28:03,432 - logic.query_analyze - INFO - GigaChat успешно инициализирован.
+2025-11-05 13:28:03,433 - utils.context_manager - INFO - Асинхронный клиент Redis инициализирован для localhost:6379
+2025-11-05 13:28:03,435 - utils.context_manager - INFO - Подключение к Redis успешно.
+2025-11-05 13:28:03,441 - __main__ - INFO - Все обработчики успешно зарегистрированы.
+2025-11-05 13:28:03,441 - aiogram.dispatcher.dispatcher - INFO - Start polling.
+2025-11-05 13:28:11,598 - handlers.general - INFO - [684421969] Запущена команда /start. Полученные аргументы (args): 'stand_1'
+2025-11-05 13:28:11,600 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': True}
+2025-11-05 13:28:11,600 - logic.stand_manager - INFO - [684421969] Сессия со стендом начата. Таймаут: 300 сек.
+2025-11-05 13:28:11,600 - handlers.general - INFO - [684421969] Начата сессия 'у стенда'. Флаг on_stand=True.
+2025-11-05 13:28:19,249 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Покажи на карте музеи Иркутска'
+2025-11-05 13:28:19,249 - logic.query_analyze - INFO - Используется контекст: ---
+Предыдущий диалог:
+- Запрос пользователя: "Покажи на карте музеи Иркутска"
+- Ответ бота: Найдено 10 объектов типа 'Музеи' (10 внутри области)
+---
+
+2025-11-05 13:28:19,466 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 13:28:22,343 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 13:28:22,346 - logic.query_analyze - INFO - Запрос 'Покажи на карте музеи Иркутска' успешно проанализирован: {"action": "show_map", "primary_entity": {"name": "музеи", "type": "Infrastructure"}, "secondary_entity": {"name": "Иркутск", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 13:28:22,346 - logic.action_handlers.geospatial - INFO - Режим поиска: по типу. Payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:28:22,346 - logic.action_handlers.geospatial - INFO - Запрос к API инфраструктуры: https://testecobot.ru/objects_in_area_by_type?debug_mode=false с payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:28:22,361 - logic.action_handlers.geospatial - INFO - [684421969] Пользователь со стенда. Запускаем дополнительную логику.
+2025-11-05 13:28:22,362 - logic.action_handlers.geospatial - INFO - [684421969] Найдено 10 external_id для отправки: ['gzgkk8eo', 'wzl9897z', '6oevq3kz', '6r113qdr', 'do2j7j7z', 'poq7gd3z', '8rv9qp9o', '6ry9pvwo', '6oed4dkz', 'gzgjyl1z']
+2025-11-05 13:28:22,533 - logic.action_handlers.geospatial - INFO - [684421969] Данные успешно отправлены на эндпоинт стенда. Статус: 200
+2025-11-05 13:28:22,613 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Покажи на карте музеи Иркутска'
+2025-11-05 13:28:26,590 - utils.settings_manager - INFO - Настройки для пользователя 684421969 обновлены: {'on_stand': False}
+2025-11-05 13:28:26,591 - logic.stand_manager - INFO - [684421969] Задача тайм-аута для стенда была отменена.
+2025-11-05 13:28:26,726 - logic.stand_manager - INFO - Команда сброса успешно отправлена на стенд.
+2025-11-05 13:28:26,726 - logic.stand_manager - INFO - [684421969] Сессия со стендом завершена вручную.
+2025-11-05 13:43:35,332 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Покажи на карте музеи Иркутска'
+2025-11-05 13:43:36,757 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 13:43:36,759 - logic.query_analyze - INFO - Запрос 'Покажи на карте музеи Иркутска' успешно проанализирован: {"action": "show_map", "primary_entity": {"name": "музеи", "type": "Infrastructure"}, "secondary_entity": {"name": "Иркутск", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 13:43:36,759 - logic.action_handlers.geospatial - INFO - Режим поиска: по типу. Payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:43:36,760 - logic.action_handlers.geospatial - INFO - Запрос к API инфраструктуры: https://testecobot.ru/objects_in_area_by_type?debug_mode=false с payload: {'limit': 10, 'object_type': 'Музеи', 'area_name': 'Иркутск'}
+2025-11-05 13:43:38,690 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Покажи на карте музеи Иркутска'
+2025-11-05 14:04:37,647 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Какая флора растет на малом море'
+2025-11-05 14:04:37,678 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2025-11-05 14:04:37,724 - httpx - INFO - HTTP Request: POST https://ngw.devices.sberbank.ru:9443/api/v2/oauth "HTTP/1.1 200 OK"
+2025-11-05 14:04:39,515 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 14:04:39,517 - logic.query_analyze - INFO - Запрос 'Какая флора растет на малом море' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "флора", "type": "Biological"}, "secondary_entity": {"name": "Малое море", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 14:05:02,909 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Какая флора растет на малом море'
+2025-11-05 14:05:15,011 - logic.query_analyze - INFO - Универсальный анализ запроса: 'а на ольхоне?'
+2025-11-05 14:05:16,361 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 14:05:16,362 - logic.query_analyze - INFO - Запрос 'а на ольхоне?' успешно проанализирован: {"action": "unknown", "primary_entity": null, "secondary_entity": {"name": "Ольхон", "type": "GeoPlace"}, "attributes": {}}
+2025-11-05 14:05:16,363 - logic.dialogue_manager - INFO - [684421969] ИТОГ ОБОГАЩЕНИЯ: {'action': 'list_items', 'primary_entity': {'name': 'флора', 'type': 'Biological'}, 'secondary_entity': {'name': 'Ольхон', 'type': 'GeoPlace'}, 'attributes': {}}
+2025-11-05 14:05:36,672 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'а на ольхоне?'
+2025-11-05 14:09:28,120 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Перечисли все природоохранные территории'
+2025-11-05 14:09:29,850 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 14:09:29,853 - logic.query_analyze - INFO - Запрос 'Перечисли все природоохранные территории' успешно проанализирован: {"action": "list_items", "primary_entity": {"name": "природоохранные территории", "type": "Infrastructure"}, "secondary_entity": null, "attributes": {}}
+2025-11-05 14:09:29,853 - logic.entity_normalizer - INFO - Сущность 'природоохранные территории' нормализована в 'Природоохранные территории'
+2025-11-05 14:09:29,854 - logic.action_handlers.geospatial - INFO - Запрос к https://testecobot.ru/object/description/?query=Перечисли все природоохранные территории&use_gigachat_answer=true&debug_mode=false с payload: {'location_info': {'nearby_places': [], 'exact_location': '', 'region': ''}, 'geo_type': {'primary_type': ['Достопримечательности'], 'specific_types': ['Заповедники', 'Заказники']}}
+2025-11-05 14:09:33,980 - logic.action_handlers.geospatial - INFO - Используем ответ от GigaChat.
+2025-11-05 14:09:34,067 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Перечисли все природоохранные территории'
+2025-11-05 14:09:45,627 - logic.query_analyze - INFO - Универсальный анализ запроса: 'Покажи их на карте'
+2025-11-05 14:09:45,627 - logic.query_analyze - INFO - Используется контекст: ---
+Предыдущий диалог:
+- Запрос пользователя: "Перечисли все природоохранные территории"
+- Ответ бота: Природоохранные территории Байкальской природной территории:
+
+1. **Гора Омулёвка** — геологический памятник природы Бурятии.
+2. **Памятник природы гора Уран-Душэ** — расположена на границе Закаменского района и Тункинского национального парка.
+3. **Байкало-Ленский государственный заповедник** — крупнейшая охранная зона на северо-западе Байкала.
+4. **Прибайкальский национальный парк** — протяженность вдоль западного берега Байкала около 400 км.
+5. **«Ангирский» заказник** — старейший заказник региона, расположенный в Заиграевском районе, вблизи города Улан-Удэ.
+
+Итого перечислено пять территорий.
+---
+
+2025-11-05 14:09:46,785 - httpx - INFO - HTTP Request: POST https://gigachat.devices.sberbank.ru/api/v1/chat/completions "HTTP/1.1 200 OK"
+2025-11-05 14:09:46,788 - logic.query_analyze - INFO - Запрос 'Покажи их на карте' успешно проанализирован: {"action": "show_map", "primary_entity": {"name": "природоохранные территории", "type": "Infrastructure"}, "secondary_entity": null, "attributes": {}}
+2025-11-05 14:09:46,878 - logic.dialogue_manager - INFO - [684421969] Контекст сохранен. Query: 'Покажи их на карте'

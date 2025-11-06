@@ -32,6 +32,7 @@ async def on_startup(dispatcher):
         if not await context_manager.check_connection():
             raise ConnectionError("Не удалось подключиться к Redis")
         dialogue_manager = DialogueManager(context_manager)
+        dispatcher['redis_client'] = context_manager.redis_client
         
         session = dispatcher['aiohttp_session']
 
