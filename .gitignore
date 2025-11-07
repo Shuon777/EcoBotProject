@@ -28,6 +28,7 @@ faiss_index_path/
 # 8. Специфичные для IDE/редакторов файлы
 .idea/
 .vscode/
+.pytest_cache/
 
 **/data/geo_place_synonyms.yml
 **/data/lookup/
