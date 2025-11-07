@@ -2,6 +2,7 @@ from typing import Any, Text, Dict, List, Optional
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
 from rasa_sdk.events import SlotSet, FollowupAction 
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import logging
 import json
@@ -114,6 +115,21 @@ class ActionExecuteGigachatFallback(Action):
             dispatcher.utter_message(text=f"Извините, не удалось получить дополнительную информацию для '{raw_object}'.")
             return reset_slots_on_error()
 
+def check_url(image_url: str) -> str | None:
+    """
+    Проверяет доступность URL. Возвращает URL в случае успеха или None в случае неудачи.
+    Эта функция будет выполняться в отдельном потоке.
+    """
+    try:
+        # Уменьшим таймаут, чтобы не ждать слишком долго
+        check_resp = requests.head(image_url, timeout=3, allow_redirects=True)
+        if check_resp.status_code == 200:
+            return image_url
+    except requests.exceptions.RequestException:
+        # Логируем, но не "роняем" весь процесс
+        logger.warning(f"Не удалось проверить URL изображения: {image_url}")
+    return None
+
 class ActionGetPic(Action):
     def name(self) -> Text:
         return "action_get_picture"
@@ -140,7 +156,6 @@ class ActionGetPic(Action):
             data = response.json()
 
             if debug_mode:
-                # В режиме отладки отправляем весь JSON ответа
                 dispatcher.utter_message(json_message=data)
                 return []
 
@@ -148,22 +163,29 @@ class ActionGetPic(Action):
                 dispatcher.utter_message(text=f"Извините, я не нашел изображений для '{canonical_object}'.")
                 return reset_slots_on_error()
 
-            images = data.get("images", [])
-            sent_images_count = 0
-            for image_item in images[:5]:
-                if isinstance(image_item, dict) and "image_path" in image_item:
-                    image_url = image_item["image_path"]
-                    try:
-                        check_resp = requests.head(image_url, timeout=5, allow_redirects=True)
-                        if check_resp.status_code == 200:
-                            dispatcher.utter_message(image=image_url)
-                            sent_images_count += 1
-                    except requests.exceptions.RequestException as e:
-                        logger.warning(f"Не удалось проверить URL изображения {image_url}: {e}")
-            
-            if sent_images_count == 0:
+            images_from_api = data.get("images", [])
+            image_urls_to_check = [
+                item["image_path"] for item in images_from_api[:5] 
+                if isinstance(item, dict) and "image_path" in item
+            ]
+
+            valid_image_urls = []
+            # Создаем пул из 5 потоков для одновременной проверки 5 URL
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                # executor.map запускает check_url для каждого элемента в image_urls_to_check
+                # и возвращает результаты в том же порядке.
+                results = executor.map(check_url, image_urls_to_check)
+                
+                # Собираем только те результаты, которые не равны None (т.е. прошли проверку)
+                valid_image_urls = [url for url in results if url]
+
+            if not valid_image_urls:
                 dispatcher.utter_message(text=f"Извините, не удалось загрузить ни одного изображения для '{canonical_object}'.")
                 return reset_slots_on_error()
+
+            # Отправляем только проверенные и рабочие URL
+            for image_url in valid_image_urls:
+                dispatcher.utter_message(image=image_url)
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Сетевая ошибка в ActionGetPic: {e}", exc_info=True)
@@ -173,8 +195,9 @@ class ActionGetPic(Action):
             logger.error(f"Непредвиденная ошибка в ActionGetPic: {e}", exc_info=True)
             dispatcher.utter_message(text="Ой, что-то пошло не так.")
             return reset_slots_on_error()
+            
         return reset_clot
-
+    
 class ActionNeasrest(Action):
     def name(self) -> Text:
         return "action_neasrest"

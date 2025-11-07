@@ -1,11 +1,10 @@
-# Файл: TelegramBot/utils/logging_config.py
-
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import sys
+import os
 
-LOG_FILE_PATH = "bot.log"
-UNHANDLED_QUERIES_LOG_PATH = "unhandled_queries.log"
+LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", "/var/log/ecobot/bot.log")
+UNHANDLED_QUERIES_LOG_PATH = os.getenv("UNHANDLED_QUERIES_LOG_PATH", "/var/log/ecobot/unhandled_queries.log")
 
 
 def setup_logging():

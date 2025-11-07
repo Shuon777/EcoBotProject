@@ -18,12 +18,14 @@ def get_env_var(var_name: str, default_value: str = None) -> str:
 
 # --- Telegram Bot ---
 BOT_TOKEN = get_env_var("BOT_TOKEN")
+USER_SETTINGS_PATH=get_env_var("USER_SETTINGS_PATH")
+USER_LOCK_SETTINGS_PATH=get_env_var("USER_LOCK_SETTINGS_PATH")
 
 # --- Rasa ---
-RASA_WEBHOOK_URL = get_env_var("RASA_WEBHOOK_URL", "http://localhost:5006/webhooks/rest/webhook")
+RASA_WEBHOOK_URL = get_env_var("RASA_WEBHOOK_URL", "http://localhost:5005/webhooks/rest/webhook")
 
 # --- GigaChat Fallback API ---
-GIGACHAT_FALLBACK_URL = get_env_var("GIGACHAT_FALLBACK_URL", "http://localhost:5556/ask_simple")
+GIGACHAT_FALLBACK_URL = get_env_var("GIGACHAT_FALLBACK_URL", "http://127.0.0.1:5556/ask_simple")
 
 # --- Backend EcoBot API (testecobot.ru) ---
 ECOBOT_API_BASE_URL = get_env_var("ECOBOT_API_BASE_URL", "https://testecobot.ru")

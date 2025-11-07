@@ -53,33 +53,24 @@ async def _notify_and_end_session(user_id: str, bot: Bot, session: aiohttp.Clien
         active_stand_tasks.pop(user_id, None)
 
 async def start_stand_session(user_id: str, bot: Bot, session: aiohttp.ClientSession) -> bool:
-    """
-    Пытается запустить сессию для пользователя.
-    Возвращает True в случае успеха, False если стенд занят другим пользователем.
-    """
     redis_client = Dispatcher.get_current().get('redis_client')
-    
-    # Проверяем, кем занят стенд
-    locked_by_user = await redis_client.get(STAND_LOCK_KEY)
-
-    if locked_by_user and locked_by_user != user_id:
+    if await redis_client.set(STAND_LOCK_KEY, user_id, ex=STAND_SESSION_TIMEOUT, nx=True):
+        # Если команда прошла успешно, значит, мы захватили замок
+        logger.info(f"[{user_id}] Глобальная блокировка стенда успешно установлена.")
+        
+        if user_id in active_stand_tasks:
+            active_stand_tasks[user_id].cancel()
+            
+        update_user_settings(user_id, {"on_stand": True})
+        task = asyncio.create_task(_notify_and_end_session(user_id, bot, session))
+        active_stand_tasks[user_id] = task
+        logger.info(f"[{user_id}] Сессия со стендом начата. Таймаут: {STAND_SESSION_TIMEOUT} сек.")
+        return True
+    else:
+        # Если ключ уже существовал, команда не сработала.
+        locked_by_user = await redis_client.get(STAND_LOCK_KEY)
         logger.warning(f"[{user_id}] Попытка занять уже используемый стенд (занят пользователем {locked_by_user}).")
-        return False # Стенд занят, отказываем
-
-    # Если уже есть активная задача для ЭТОГО пользователя, отменяем ее
-    if user_id in active_stand_tasks:
-        active_stand_tasks[user_id].cancel()
-    
-    # Устанавливаем или обновляем блокировку с TTL
-    await redis_client.set(STAND_LOCK_KEY, user_id, ex=STAND_SESSION_TIMEOUT)
-    logger.info(f"[{user_id}] Глобальная блокировка стенда установлена.")
-
-    # Запускаем сессию и таймер
-    update_user_settings(user_id, {"on_stand": True})
-    task = asyncio.create_task(_notify_and_end_session(user_id, bot, session))
-    active_stand_tasks[user_id] = task
-    logger.info(f"[{user_id}] Сессия со стендом начата/продлена. Таймаут: {STAND_SESSION_TIMEOUT} сек.")
-    return True
+        return False
 
 async def end_stand_session(user_id: str, session: aiohttp.ClientSession):
     """Завершает сессию для пользователя, отменяет задачу и сбрасывает стенд."""

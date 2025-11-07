@@ -4,11 +4,12 @@ import logging
 from pathlib import Path
 from filelock import FileLock, Timeout
 from typing import Dict, Any
+from config import USER_SETTINGS_PATH, USER_LOCK_SETTINGS_PATH
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE_PATH = Path(__file__).parent / "user_settings.json"
-LOCK_FILE_PATH = Path(__file__).parent / "user_settings.json.lock"
+SETTINGS_FILE_PATH = Path(USER_SETTINGS_PATH)
+LOCK_FILE_PATH = Path(USER_LOCK_SETTINGS_PATH)
 
 def get_user_settings(user_id: str) -> Dict[str, Any]:
     """

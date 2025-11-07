@@ -1,0 +1,46 @@
+services:
+  rasa:
+    build:
+      context: ./RasaProject
+      dockerfile: Dockerfile
+      # ВОЗВРАЩАЕМ ЭТУ СТРОКУ!
+      network: host
+    network_mode: "host"
+
+  rasa-actions:
+    build:
+      context: ./RasaProject
+      dockerfile: Dockerfile.actions
+      # И ЗДЕСЬ ТОЖЕ!
+      network: host
+    network_mode: "host"
+    env_file:
+      - ./RasaProject/.env
+    volumes:
+      - /var/log/ecobot:/var/log/ecobot
+      - /var/data/ecobot:/var/data/ecobot
+
+  giga-api:
+    build:
+      context: ./GigaChatAPI
+      # И ЗДЕСЬ!
+      network: host
+    network_mode: "host"
+    env_file:
+      - ./GigaChatAPI/.env
+
+  telegram-bot:
+    build:
+      context: ./TelegramBot
+      # И ЗДЕСЬ!
+      network: host
+    network_mode: "host"
+    volumes:
+      - /var/log/ecobot:/var/log/ecobot
+      - /var/data/ecobot:/var/data/ecobot
+    env_file:
+      - ./TelegramBot/.env
+    depends_on:
+      - rasa
+      - rasa-actions
+      - giga-api
