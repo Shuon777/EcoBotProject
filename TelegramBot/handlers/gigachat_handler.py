@@ -196,6 +196,7 @@ class GigaChatHandler:
             elif response_type == "image":
                 await message.answer_photo(resp_data["content"])
             elif response_type == "map":
+                logger.info(f"Пытаюсь отправить карту: {resp_data['static']}")
                 kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
                 await message.answer_photo(photo=resp_data["static"], caption=resp_data.get("caption", ""), reply_markup=kb, parse_mode="Markdown")
 
