@@ -115,7 +115,7 @@ class ActionExecuteGigachatFallback(Action):
             dispatcher.utter_message(text=f"Извините, не удалось получить дополнительную информацию для '{raw_object}'.")
             return reset_slots_on_error()
 
-def check_url(image_url: str) -> str | None:
+def check_url(image_url: str) -> Optional[str]:
     """
     Проверяет доступность URL. Возвращает URL в случае успеха или None в случае неудачи.
     Эта функция будет выполняться в отдельном потоке.

@@ -1,6 +1,6 @@
 # Файл: /var/www/EcoBotProject/RasaProject/Dockerfile
 
-FROM rasa/rasa:3.6.4-full
+FROM python:3.9
 WORKDIR /app
 COPY . .
 

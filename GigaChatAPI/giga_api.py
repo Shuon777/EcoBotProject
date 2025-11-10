@@ -1,4 +1,3 @@
-# --- НАЧАЛО ФАЙЛА GigaChatAPI/giga_api.py ---
 from flask import Flask, request, jsonify
 from langchain_gigachat import GigaChat
 from dotenv import load_dotenv
@@ -49,6 +48,6 @@ def ask_simple():
         logger.error(f"Ошибка во время обращения к API GigaChat: {e}", exc_info=True)
         return jsonify({"error": f"Внутренняя ошибка при обращении к GigaChat: {e}"}), 500
 
-if __name__ == '__main__':
-    # Запускаем на порту 5556, чтобы не конфликтовать с Rasa
-    app.run(host='0.0.0.0', port=5556)
+# if __name__ == '__main__':
+#     # Запускаем на порту 5556, чтобы не конфликтовать с Rasa
+#     app.run(host='0.0.0.0', port=5556)
