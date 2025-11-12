@@ -64,7 +64,10 @@ JSON
 Запрос: "Где обитает эдельвейс около култука"
 Результат:
 {{"action": "find_nearby", "primary_entity": {{"name": "эдельвейс", "type": "Biological"}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace"}}, "attributes": {{}} }}
-               
+
+Запрос: "Найди иву возле Бодайбо"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological"}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace"}}, "attributes": {{}} }}              
 
 Запрос: "Расскажи про байкальскую нерпу"
 Результат:  

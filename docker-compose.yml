@@ -1,43 +1,74 @@
+version: '3.8'
+
 services:
+  # 1. Бэкенд-сервис Telegram-бота
+  backend:
+    build:
+      context: ./TelegramBot
+    container_name: ecobot_backend
+    env_file:
+      - ./TelegramBot/.env
+    # Тома для логов и пользовательских настроек, чтобы они не терялись
+    volumes:
+      - ./logs:/var/log/ecobot
+      - ./data/user_settings:/var/data/ecobot
+    # Указываем, что этот сервис зависит от всех остальных
+    depends_on:
+      - rasa
+      - rasa-actions
+      - giga-api
+      - redis
+
+  # 2. Основной сервер Rasa
   rasa:
     build:
       context: ./RasaProject
       dockerfile: Dockerfile
-      network: host
-    network_mode: "host"
+    container_name: ecobot_rasa_server
+    # Примонтируем папку с моделями. Контейнер будет читать модели отсюда.
+    volumes:
+      - ./RasaProject/models:/app/models
+    ports:
+      # Пробрасываем порт 5005 из контейнера наружу на хост-машину
+      - "5005:5005"
 
+  # 3. Сервер действий Rasa
   rasa-actions:
     build:
       context: ./RasaProject
       dockerfile: Dockerfile.actions
-      network: host
-    network_mode: "host"
+    container_name: ecobot_rasa_actions
     env_file:
       - ./RasaProject/.env
+    # Том для доступа к папке с картами
     volumes:
-      - /var/log/ecobot:/var/log/ecobot
-      - /var/data/ecobot:/var/data/ecobot
       - /var/www/map_bot/maps:/app/maps
+    ports:
+      # Пробрасываем порт 5055
+      - "5055:5055"
 
+  # 4. API для GigaChat
   giga-api:
     build:
       context: ./GigaChatAPI
-      network: host
-    network_mode: "host"
+    container_name: ecobot_giga_api
     env_file:
       - ./GigaChatAPI/.env
+    ports:
+      # Пробрасываем порт 5556
+      - "5556:5556"
 
-  telegram-bot:
-    build:
-      context: ./TelegramBot
-      network: host
-    network_mode: "host"
+  # 5. Сервис Redis (лучше, чтобы он тоже был в Docker)
+  redis:
+    image: "redis:7-alpine"
+    container_name: ecobot_redis
+    # Используем именованный том для сохранения данных Redis между перезапусками
     volumes:
-      - /var/log/ecobot:/var/log/ecobot
-      - /var/data/ecobot:/var/data/ecobot
-    env_file:
-      - ./TelegramBot/.env
-    depends_on:
-      #- rasa
-      - rasa-actions
-      - giga-api
+      - redis_data:/data
+    ports:
+      # Пробрасываем порт 6379 для возможности подключения к Redis с хоста (например, через redis-cli)
+      - "6379:6379"
+
+# Определяем именованный том для данных Redis
+volumes:
+  redis_data:

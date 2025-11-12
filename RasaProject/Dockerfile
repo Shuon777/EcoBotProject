@@ -1,19 +1,16 @@
-# Файл: /var/www/EcoBotProject/RasaProject/Dockerfile
-
+# Правильная версия
 FROM python:3.9
 WORKDIR /app
-COPY . .
 
-# --- НАЧАЛО ИЗМЕНЕНИЙ ---
-# Временно переключаемся на root, чтобы иметь права на запись для обучения
-USER root
-# --- КОНЕЦ ИЗМЕНЕНИЙ ---
-
+# Копируем только то, что нужно для зависимостей
+COPY requirements.txt .
 RUN --network=host pip install rasa[transformers]
 
-RUN rasa train
+# Копируем остальной код
+COPY . .
 
-# --- ВАЖНО: Возвращаемся к стандартному пользователю для запуска сервера ---
+# УБИРАЕМ "RUN rasa train" ОТСЮДА!
+
 USER 1001
-
-CMD ["run", "--debug", "--enable-api", "--cors", "*"]
+# Запускаем без флага --debug и указываем путь к модели
+CMD ["run", "--enable-api", "--cors", "*", "--model", "/app/models"]

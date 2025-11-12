@@ -20,4 +20,4 @@ RUN --network=host pip install -r actions-requirements.txt
 # ВАЖНО: Возвращаемся к стандартному пользователю для запуска самого сервера
 USER 1001
 
-CMD ["run", "actions", "--debug"]
+CMD ["run", "actions"]
