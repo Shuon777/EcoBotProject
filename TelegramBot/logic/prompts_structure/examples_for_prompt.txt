@@ -1,0 +1,55 @@
+Запрос: "А расскажи про нее"
+Результат:
+{{"action": "describe", "primary_entity": null, "secondary_entity": null, "attributes": {{}}}}
+
+Запрос: "Где обитает эдельвейс около култука"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}
+
+Запрос: "Найди иву возле Бодайбо"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}              
+
+Запрос: "Расскажи про байкальскую нерпу"
+Результат:  
+{{"action": "describe", "primary_entity": {{ "name": "байкальская нерпа", "type": "Biological", "category": "Fauna", "subcategory": [] }}, "secondary_entity": null, "attributes": {{}} }}
+
+Запрос: "Покажи пихту сибирскую зимой"
+Результат:   
+{{"action": "show_image", "primary_entity": {{ "name": "пихта сибирская", "type": "Biological", "category": "Flora", "subcategory": [] }}, "secondary_entity": null, "attributes": {{ "season": "Зима" }} }}
+
+Запрос: "Какая флора растет на малом море"
+Результат:    
+{{"action": "list_items", "primary_entity": {{ "name": "флора", "type": "Biological", "category": "Flora", "subcategory": [] }}, "secondary_entity": {{ "name": "Малое море", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }}
+
+Запрос: "Расскажи о музеях в Бодайбо"
+Результат:  
+{{"action": "list_items", "primary_entity": {{ "name": "музеи", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Музеи"] }}, "secondary_entity": {{ "name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }} 
+
+Запрос: "А осенью?"
+Результат:  
+{{"action": "unknown", "primary_entity": null, "secondary_entity": null, "attributes": {{ "season": "Осень" }} }}
+
+Запрос: "Покажи лиственницу сибирскую осенью на болоте"
+Результат:  
+{{"action": "show_image", "primary_entity": {{"name": "лиственница сибирская", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": null, "attributes": {{"season": "Осень", "habitat": "Болото"}} }}
+  
+Запрос: "А где она растет?"
+Результат:      
+{{"action": "show_map", "primary_entity": null, "secondary_entity": null, "attributes": {{}} }}
+
+Запрос: "что интересного есть рядом с поселком Баргузин?"
+Результат: 
+{{"action": "list_items", "primary_entity": {{ "name": "достопримечательности", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": [] }}, "secondary_entity": {{ "name": "Баргузин", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }}
+
+Запрос: "А копеечник зундукский?"
+Результат:
+{{"action": "unknown", "primary_entity": {{"name": "копеечник зундукский", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": null, "attributes": {{}} }}
+
+Запрос: "Почему солнечную обсерваторию построили в Листвянке?"
+Результат:
+{"action": "describe", "primary_entity": {"name": "солнечная обсерватория", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Наука"]}, "secondary_entity": {"name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": []}, "attributes": {}}
+
+Запрос: "Покажи на карте флору около Листвянки"
+Результат:
+{"action": "list_items", "primary_entity": {"name": "флора", "type": "Biological", "category": "Flora", "subcategory": []}, "secondary_entity": {"name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": []}, "attributes": {}}

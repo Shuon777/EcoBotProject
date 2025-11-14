@@ -57,7 +57,6 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске ближайших мест."}]
 
 async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
-    # [НОВОЕ] Извлекаем данные из `analysis`
     object_nom = analysis.get("primary_entity", {}).get("name")
     if not object_nom: return [{"type": "text", "content": "Не указан объект для отображения на карте."}]
     
@@ -232,15 +231,18 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     
     raw_entity_name = primary_entity.get("name")
     entity_category = primary_entity.get("category", "Достопримечательности")
+    entity_subcategory = primary_entity.get("subcategory")
     
-    canonical_entity_name = normalize_entity_name(raw_entity_name)
+    #canonical_entity_name = normalize_entity_name(raw_entity_name)
     
-    specific_types_list = []
-    if canonical_entity_name:
-        if canonical_entity_name in GROUP_ENTITY_MAP:
-            specific_types_list = GROUP_ENTITY_MAP[canonical_entity_name]
-        else:
-            specific_types_list = [canonical_entity_name]
+    #canonical_entity_name = raw_entity_name
+
+    # specific_types_list = []
+    # if canonical_entity_name:
+    #     if canonical_entity_name in GROUP_ENTITY_MAP:
+    #         specific_types_list = GROUP_ENTITY_MAP[canonical_entity_name]
+    #     else:
+    #         specific_types_list = [canonical_entity_name]
     
     baikal_relation = determine_baikal_relation(
         query=original_query,
@@ -259,13 +261,16 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
         else:
             location_info["exact_location"] = ""
             location_info["region"] = ""
+    elif location_name == "Байкал":
+        location_info["exact_location"] = ""
+        location_info["region"] = ""
     else:
         location_info["exact_location"] = location_name
         location_info["region"] = ""
     
     geo_type_payload = {
         "primary_type": [entity_category],
-        "specific_types": specific_types_list
+        "specific_types": entity_subcategory
     }
         
     payload = {
@@ -280,8 +285,8 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
         url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
     else:
         url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
-    
     logger.info(f"Запрос к {url} с payload: {payload}")
+
     try:
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
@@ -337,8 +342,12 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                     for desc in descriptions[first_valid_index + 1:]:
                         if title := desc.get("title"):
                             if title.strip():
-                                remaining_titles.append(title.strip())
-                        if len(remaining_titles) >= 10:
+                                # Обрезаем тайтл до первой точки
+                                cleaned_title = title.strip().split('.')[0].strip()
+                                if cleaned_title:  # Проверяем, что после обрезки не пустая строка
+                                    remaining_titles.append(cleaned_title + "...")
+                        # Ограничиваем максимум 5 тайтлами
+                        if len(remaining_titles) >= 5:
                             break
                     
                     if remaining_titles:
