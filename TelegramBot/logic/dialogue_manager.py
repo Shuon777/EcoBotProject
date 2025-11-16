@@ -11,6 +11,31 @@ class DialogueManager:
     def __init__(self, context_manager: RedisContextManager):
         self.context_manager = context_manager
 
+    def _filter_blocked_responses(self, response: list) -> list:
+        """Фильтрует нежелательные ответы бота перед сохранением в историю"""
+        blocked_phrases = [
+            "я не готов разговаривать",
+            "я не готов про это разговаривать", 
+            "я не могу разговаривать",
+            "я не умею разговаривать",
+            "извините, я не понимаю"
+        ]
+        
+        filtered_response = []
+        for resp in response:
+            if resp.get("type") == "text":
+                content = resp.get("content", "").lower()
+                # Проверяем, не содержит ли ответ заблокированные фразы
+                if not any(phrase in content for phrase in blocked_phrases):
+                    filtered_response.append(resp)
+                else:
+                    logger.info(f"🚫 Заблокирован ответ: {resp.get('content')}")
+            else:
+                # Не текстовые ответы (карты, изображения) сохраняем как есть
+                filtered_response.append(resp)
+        
+        return filtered_response
+
     async def enrich_request(
         self, user_id: str, current_analysis: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -65,6 +90,14 @@ class DialogueManager:
         return final_analysis
     
     async def update_history(self, user_id: str, query: str, final_analysis: Dict[str, Any], response: list):
+        # Фильтруем ответы перед сохранением
+        filtered_response = self._filter_blocked_responses(response)
+        
+        # Если после фильтрации ответов не осталось, не сохраняем в историю
+        if not filtered_response:
+            logger.info(f"[{user_id}] После фильтрации ответов не осталось. История не обновляется.")
+            return
+            
         primary_entity = final_analysis.get("primary_entity")
         if final_analysis.get("action") == "unknown" and (not primary_entity or not primary_entity.get("name")):
             logger.debug(f"[{user_id}] Пропуск сохранения нецелевого запроса в историю.")
@@ -73,7 +106,7 @@ class DialogueManager:
         history_entry = {
             "query": query,
             "analysis": final_analysis,
-            "response": response
+            "response": filtered_response  # ← Сохраняем ОТФИЛЬТРОВАННЫЙ ответ
         }
 
         user_context = await self.context_manager.get_context(user_id)

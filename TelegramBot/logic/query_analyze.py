@@ -59,6 +59,7 @@ class QueryAnalyzer:
             self.examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
             self.actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
             self.types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
+            self.flora = load_prompt_part('prompts_structure/examples_entity.txt')
             logger.info("GigaChat успешно инициализирован.")
         except Exception as e:
             logger.error(f"Ошибка инициализации GigaChat: {str(e)}")
@@ -143,7 +144,8 @@ class QueryAnalyzer:
                 "history_block": history_block, 
                 "actions": self.actions, 
                 "examples": self.examples, 
-                "types": self.types
+                "types": self.types,
+                "flora": self.flora
             })
             
             generated_text = response.content.strip()
