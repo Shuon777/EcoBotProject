@@ -9,9 +9,9 @@ from logic.dialogue_manager import DialogueManager
 from logic.action_handlers.biological import handle_get_description, handle_get_picture
 from logic.action_handlers.geospatial import (
     handle_draw_locate_map, handle_nearest, handle_objects_in_polygon,
-    handle_geo_request, handle_draw_map_of_infrastructure
+    handle_geo_request, handle_draw_map_of_infrastructure, handle_draw_map_of_list_stub
 )
-from utils.bot_utils import send_long_message
+from utils.bot_utils import send_long_message, escape_markdown
 from utils.context_manager import RedisContextManager
 from config import API_URLS
 
@@ -44,6 +44,7 @@ class GigaChatHandler:
             ("find_nearby", "ANY"): handle_nearest,
             ("list_items", "Biological"): handle_objects_in_polygon,
             ("list_items", "Infrastructure"): handle_geo_request,
+            ("count_items", "Infrastructure"): handle_geo_request,
         }
 
         self.callback_handlers: Dict[str, CallbackHandler] = {
@@ -64,102 +65,130 @@ class GigaChatHandler:
     async def process_message(self, message: types.Message):
         """
         Главный обработчик текстовых сообщений. Анализирует, обогащает и диспетчеризует.
-        Теперь включает логику для обработки текстовых команд, дублирующих кнопки.
+        Включает обработку текстовых команд, выбор обработчика по контексту и защиту от ошибок LLM.
         """
         user_id, query = str(message.chat.id), message.text
         
         try:
-            # --- [НОВАЯ ЛОГИКА ПРОВЕРКИ ТЕКСТА НА КОМАНДУ-КНОПКУ] ---
-            latest_history = await self.dialogue_manager.get_latest_history(user_id)
-            if latest_history:
-                # Ищем кнопки в ответе из последней записи истории
-                last_response = latest_history.get("response", [])
-                if last_response and last_response[0].get("buttons"):
-                    buttons_data = last_response[0]["buttons"]
-                    
-                    # Проходим по всем кнопкам и ищем совпадение по тексту
-                    for row in buttons_data:
-                        for button in row:
-                            clean_button_text = self._clean_text_for_comparison(button.get("text"))
-                            clean_query = self._clean_text_for_comparison(query)
-                            if clean_button_text and clean_button_text == clean_query:
-                                logger.info(f"[{user_id}] Текстовая команда '{query}' распознана как кнопка.")
-                                
-                                callback_data = button.get("callback_data")
-                                if not callback_data:
-                                    continue # Пропускаем кнопки-ссылки (у них нет callback_data)
+            # Проверяем, не был ли нам передан исправленный анализ из рекурсивного вызова
+            final_analysis_override = getattr(message, 'final_analysis_override', None)
 
-                                # Создаем "фальшивый" callback query
-                                fake_cq = FakeCallbackQuery(message=message, data=callback_data)
-                                
-                                # Находим и вызываем нужный обработчик для этой кнопки
-                                prefix = callback_data.split(':', 1)[0]
-                                handler = self.callback_handlers.get(prefix)
-                                
-                                if handler:
-                                    logger.info(f"[{user_id}] Вызываем обработчик {handler.__name__} для текстовой команды.")
-                                    await handler(fake_cq)
-                                    return # Важно! Прекращаем дальнейшую обработку.
-            # --- [КОНЕЦ НОВОЙ ЛОГИКИ] ---
+            if final_analysis_override:
+                final_analysis = final_analysis_override
+                logger.info(f"[{user_id}] Используется исправленный (override) анализ: {final_analysis}")
+                # Сбрасываем флаг, чтобы не попасть в бесконечный цикл
+                delattr(message, 'final_analysis_override')
+            else:
+                # --- [СТАНДАРТНЫЙ ПАЙПЛАЙН, ЕСЛИ НЕТ OVERRIDE] ---
+                
+                latest_history = await self.dialogue_manager.get_latest_history(user_id)
+                
+                # --- [ЛОГИКА ПРОВЕРКИ ТЕКСТА НА КОМАНДУ-КНОПКУ] ---
+                if latest_history:
+                    last_response = latest_history.get("response", [])
+                    if last_response and last_response[0].get("buttons"):
+                        buttons_data = last_response[0]["buttons"]
+                        for row in buttons_data:
+                            for button in row:
+                                clean_button_text = self._clean_text_for_comparison(button.get("text"))
+                                clean_query = self._clean_text_for_comparison(query)
+                                if clean_button_text and clean_button_text == clean_query:
+                                    logger.info(f"[{user_id}] Текстовая команда '{query}' распознана как кнопка.")
+                                    callback_data = button.get("callback_data")
+                                    if not callback_data:
+                                        continue
+                                    fake_cq = FakeCallbackQuery(message=message, data=callback_data)
+                                    prefix = callback_data.split(':', 1)[0]
+                                    handler = self.callback_handlers.get(prefix)
+                                    if handler:
+                                        logger.info(f"[{user_id}] Вызываем обработчик {handler.__name__} для текстовой команды.")
+                                        await handler(fake_cq)
+                                        return
 
-            # Если код дошел до сюда, значит, это обычное текстовое сообщение, а не команда-кнопка.
-            # Запускаем стандартный процесс обработки.
-            
-            await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
-            
-            # Анализируем текущий запрос (с учетом истории для LLM)
-            analysis = await self.qa.analyze_query(query, history=latest_history)
-            if not analysis:
-                await self._reply_with_error(message, f"QueryAnalyzer не вернул анализ для запроса: '{query}'")
-                return
+                await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+                
+                # Шаг 1: Анализ запроса
+                analysis = await self.qa.analyze_query(query, history=latest_history)
+                if not analysis:
+                    await self._reply_with_error(message, f"QueryAnalyzer не вернул анализ для запроса: '{query}'")
+                    return
 
-            # Обогащаем результат анализа (для случаев "а осенью?")
-            final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis)
+                # Шаг 2: Обогащение анализа контекстом
+                final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis, query)
             
-            action = final_analysis.get("action")
+            # Шаг 3: Выбор правильного обработчика
             handler = None
-            if action and action != "unknown":
-                primary_entity_type = final_analysis.get("primary_entity", {}).get("type", "ANY")
-                handler = self.action_handlers.get((action, primary_entity_type))
-                if not handler:
-                    if action == "count_items" and primary_entity_type == "Infrastructure":
-                        handler = handle_geo_request
-                    else:
+            if final_analysis.get("action") == "show_map" and final_analysis.get("used_objects_from_context"):
+                handler = handle_draw_map_of_list_stub
+                logger.debug(f"[{user_id}] Контекстный запрос на карту. Принудительно выбран обработчик-заглушка.")
+            else:
+                action = final_analysis.get("action")
+                if action and action != "unknown":
+                    primary_entity = final_analysis.get("primary_entity")
+                    primary_entity_type = primary_entity.get("type", "ANY") if primary_entity else "ANY"
+                    handler = self.action_handlers.get((action, primary_entity_type))
+                    if not handler:
                         handler = self.action_handlers.get((action, "ANY"))
 
             if not handler:
-                unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\"")
+                unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\" - No handler found for analysis: {final_analysis}")
                 fallback_keyboard = types.InlineKeyboardMarkup().add(
                     types.InlineKeyboardButton(text="💡 Начать поиск с подсказками", switch_inline_query_current_chat="")
                 )
                 await message.answer(
-                    "К сожалению, я не смог распознать ваш запрос. Попробуйте использовать быстрый поиск с автодополнением.",
+                    "К сожалению, я не смог распознать ваш запрос. Попробуйте переформулировать запрос или использовать быстрый поиск с автодополнением.",
                     reply_markup=fallback_keyboard
                 )
                 return
 
             logger.debug(f"[{user_id}] Диспетчер вызвал обработчик: {handler.__name__}")
 
-            all_possible_args = {
-                "session": self.session, "analysis": final_analysis,
-                "user_id": user_id, "original_query": query, "debug_mode": False
-            }
-            import inspect
-            handler_signature = inspect.signature(handler)
-            required_args = handler_signature.parameters.keys()
-            args_to_pass = {key: value for key, value in all_possible_args.items() if key in required_args}
+            # Шаг 4: Безопасный вызов обработчика с механизмом отката
+            responses = []
+            try:
+                all_possible_args = {
+                    "session": self.session, "analysis": final_analysis,
+                    "user_id": user_id, "original_query": query, "debug_mode": False
+                }
+                import inspect
+                handler_signature = inspect.signature(handler)
+                required_args = handler_signature.parameters.keys()
+                args_to_pass = {key: value for key, value in all_possible_args.items() if key in required_args}
+                
+                responses = await handler(**args_to_pass)
             
-            responses = await handler(**args_to_pass)
-            
+            except (AttributeError, TypeError, KeyError) as e:
+                logger.error(f"[{user_id}] ОШИБКА ВЫЗОВА ОБРАБОТЧИКА '{handler.__name__}': {e}. Вероятно, LLM вернула неверный action.", exc_info=False)
+                
+                latest_history = await self.dialogue_manager.get_latest_history(user_id)
+                if latest_history:
+                    last_action = latest_history.get("analysis", {}).get("action")
+                    # Откатываемся, только если LLM предложила что-то новое и ошибочное
+                    if last_action and last_action != final_analysis.get("action"):
+                        logger.warning(f"[{user_id}] Попытка отката к предыдущему действию: '{last_action}'")
+                        final_analysis["action"] = last_action
+                        message.final_analysis_override = final_analysis
+                        await self.process_message(message) # Рекурсивный вызов с исправленным анализом
+                        return
+
+                responses = [{"type": "text", "content": "Извините, я не смог обработать ваш уточняющий запрос."}]
+
+            # Шаг 5: Извлечение метаданных, отправка ответа и сохранение истории
+            used_objects = []
+            if responses and isinstance(responses, list) and len(responses) > 0 and 'used_objects' in responses[0]:
+                used_objects = responses[0].pop('used_objects')
+                logger.info(f"Из ответа извлечены used_objects для истории: {used_objects}")
+                
             await self._send_responses(message, responses)
             
-            # Сохраняем историю в Redis
-            await self.dialogue_manager.update_history(user_id, query, final_analysis, responses)
+            analysis_to_save = getattr(message, 'final_analysis_override', final_analysis)
+            
+            await self.dialogue_manager.update_history(user_id, query, analysis_to_save, responses, used_objects)
             
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в GigaChatHandler.process_message: {e}", exc_info=True)
             await message.answer("Ой, что-то пошло не так на моей стороне.")
-            
+
     async def process_callback(self, callback_query: types.CallbackQuery):
         """Главный обработчик кнопок. Находит нужный обработчик и передает ему управление."""
         user_id, data = str(callback_query.from_user.id), callback_query.data
@@ -181,24 +210,51 @@ class GigaChatHandler:
             await callback_query.answer()
 
     async def _send_responses(self, message: types.Message, responses: list):
-        """Отправляет отформатированные ответы пользователю."""
+        """Отправляет отформатированные ответы пользователю, экранируя Markdown."""
         for resp_data in responses:
             response_type = resp_data.get("type")
+            
+            # --- [ИЗМЕНЕНИЕ ЗДЕСЬ] ---
+            # Мы будем использовать MarkdownV2, так как он более строгий и предсказуемый
+            parse_mode = "MarkdownV2"
+
             if response_type in ["clarification", "clarification_map"]:
                 keyboard = self._build_keyboard(resp_data.get("buttons"))
+                
+                # Экранируем текст и caption
+                caption_text = escape_markdown(resp_data.get("content", ""))
+                
                 if response_type == "clarification_map":
-                    await message.answer_photo(photo=resp_data["static_map"], caption=resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
+                    await message.answer_photo(
+                        photo=resp_data["static_map"], 
+                        caption=caption_text, 
+                        reply_markup=keyboard, 
+                        parse_mode=parse_mode
+                    )
                 else:
-                    await message.answer(resp_data["content"], reply_markup=keyboard, parse_mode="Markdown")
-                break # После clarification другие сообщения не шлем
+                    await message.answer(caption_text, reply_markup=keyboard, parse_mode=parse_mode)
+                break
+            
             elif response_type == "text":
-                await send_long_message(message, resp_data["content"], parse_mode="Markdown")
+                # Экранируем текст перед отправкой
+                content_text = escape_markdown(resp_data.get("content", ""))
+                await send_long_message(message, content_text, parse_mode=parse_mode)
+                
             elif response_type == "image":
                 await message.answer_photo(resp_data["content"])
+                
             elif response_type == "map":
-                logger.info(f"Пытаюсь отправить карту: {resp_data['static']}")
                 kb = InlineKeyboardMarkup().add(InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"]))
-                await message.answer_photo(photo=resp_data["static"], caption=resp_data.get("caption", ""), reply_markup=kb, parse_mode="Markdown")
+                
+                # Экранируем caption
+                caption_text = escape_markdown(resp_data.get("caption", ""))
+                
+                await message.answer_photo(
+                    photo=resp_data["static"], 
+                    caption=caption_text, 
+                    reply_markup=kb, 
+                    parse_mode=parse_mode
+                )
 
     def _build_keyboard(self, buttons_data: list) -> InlineKeyboardMarkup | None:
         """Универсальный сборщик инлайн-клавиатур."""

@@ -1,5 +1,6 @@
 # --- НАЧАЛО ФАЙЛА TelegramBot/utils/bot_utils.py ---
 from aiogram import types
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -157,3 +158,34 @@ async def send_normalized_message(message: types.Message, norm: dict):
          sent_message = await message.answer("Выберите вариант:", reply_markup=markup)
          if "context" in norm:
              sent_message.context = norm["context"]
+
+def create_structured_response(api_data: dict, responses: list) -> list:
+    """
+    Принимает полный ответ от API и список сообщений для пользователя.
+    Извлекает 'used_objects' из ответа API и "прикрепляет" их к первому сообщению.
+    Возвращает готовый для отправки список сообщений.
+    """
+    if not isinstance(api_data, dict):
+        return responses
+
+    used_objects = api_data.get("used_objects", [])
+    
+    # Если есть и сообщения для пользователя, и объекты для контекста...
+    if responses and used_objects:
+        # ...прикрепляем метаданные к первому сообщению.
+        responses[0]['used_objects'] = used_objects
+        logging.getLogger(__name__).info(f"К ответу прикреплены used_objects: {used_objects}")
+        
+    return responses
+
+def escape_markdown(text: str) -> str:
+    """
+    Экранирует специальные символы Markdown V2 в тексте.
+    """
+    if not text:
+        return ""
+    
+    # Список символов, которые нужно экранировать в MarkdownV2
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)

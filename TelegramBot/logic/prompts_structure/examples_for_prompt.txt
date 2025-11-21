@@ -10,6 +10,15 @@
 Результат:
 {{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}              
 
+Запрос: "Покажи где около Култука обитает даурский ёж"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "даурский ёж", "type": "Biological", "category": "Fauna", "subcategory": []}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}   
+
+
+Запрос: "Покажи где растет ива около Бодайбо"
+Результат:
+{{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological", "category": "Fauna", "subcategory": []}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }} 
+
 Запрос: "Расскажи про байкальскую нерпу"
 Результат:  
 {{"action": "describe", "primary_entity": {{ "name": "байкальская нерпа", "type": "Biological", "category": "Fauna", "subcategory": [] }}, "secondary_entity": null, "attributes": {{}} }}
@@ -53,3 +62,7 @@
 Запрос: "Покажи на карте флору около Листвянки"
 Результат:
 {"action": "list_items", "primary_entity": {"name": "флора", "type": "Biological", "category": "Flora", "subcategory": []}, "secondary_entity": {"name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": []}, "attributes": {}}
+
+Запрос: "Где растет эдельвейс?"
+Результат:
+{"action": "show_map", "primary_entity": {"name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": []}, "secondary_entity": null, "attributes": {}}

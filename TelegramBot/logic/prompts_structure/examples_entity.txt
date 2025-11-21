@@ -157,3 +157,5 @@
 Порелла тоненькая -> Biological
 Дидимодон тупой -> Biological
 Тониния глинисто-желтая -> Biological
+Лопасть турбины -> Infrastructure
+Лопасть -> Infrastructure

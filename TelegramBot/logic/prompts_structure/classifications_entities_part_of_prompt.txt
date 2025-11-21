@@ -133,6 +133,12 @@
     "subcategory": ["Памятники"]
   }}
   "primary_entity": {{
+    "name": "Лопость",
+    "type": "Infrastructure", 
+    "category": "Достопримечательности",
+    "subcategory": ["Памятники"]
+  }}
+  "primary_entity": {{
     "name": "научные учреждения",
     "type": "Infrastructure", 
     "category": "Достопримечательности",
