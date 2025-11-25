@@ -12,6 +12,7 @@ from logic.action_handlers.geospatial import (
     handle_geo_request, handle_draw_map_of_infrastructure, handle_draw_map_of_list_stub
 )
 from utils.bot_utils import send_long_message, escape_markdown
+from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from config import API_URLS
 
@@ -62,6 +63,7 @@ class GigaChatHandler:
         # Заменяем несколько пробелов на один и убираем по краям
         return ' '.join(cleaned_text.split()).lower()
 
+
     async def process_message(self, message: types.Message):
         """
         Главный обработчик текстовых сообщений. Анализирует, обогащает и диспетчеризует.
@@ -69,7 +71,14 @@ class GigaChatHandler:
         """
         user_id, query = str(message.chat.id), message.text
         
+        # Импортируем FeedbackManager для управления фидбеком на протяжении всей обработки
+        from utils.feedback_manager import FeedbackManager
+        feedback = FeedbackManager(message)
+        
         try:
+            # Запускаем статус "печатает" в самом начале
+            await feedback.start_action("typing")
+            
             # Проверяем, не был ли нам передан исправленный анализ из рекурсивного вызова
             final_analysis_override = getattr(message, 'final_analysis_override', None)
 
@@ -105,7 +114,8 @@ class GigaChatHandler:
                                         await handler(fake_cq)
                                         return
 
-                await message.bot.send_chat_action(chat_id=user_id, action=types.ChatActions.TYPING)
+                # Отправляем промежуточное сообщение о начале обработки
+                await feedback.send_progress_message("🔍 Понял ваш запрос, анализирую...")
                 
                 # Шаг 1: Анализ запроса
                 analysis = await self.qa.analyze_query(query, history=latest_history)
@@ -116,6 +126,16 @@ class GigaChatHandler:
                 # Шаг 2: Обогащение анализа контекстом
                 final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis, query)
             
+            # --- [DEBUG MODE START] ---
+            debug_mode = get_user_settings(user_id).get("debug_mode", False)
+            if debug_mode:
+                debug_info = (
+                    f"🐞 **Debug Info**\n"
+                    f"**LLM Analysis**:\n```json\n{final_analysis}\n```"
+                )
+                await message.answer(debug_info, parse_mode="Markdown")
+            # --- [DEBUG MODE END] ---
+
             # Шаг 3: Выбор правильного обработчика
             handler = None
             if final_analysis.get("action") == "show_map" and final_analysis.get("used_objects_from_context"):
@@ -143,12 +163,16 @@ class GigaChatHandler:
 
             logger.debug(f"[{user_id}] Диспетчер вызвал обработчик: {handler.__name__}")
 
+            if debug_mode:
+                 await message.answer(f"🐞 **Handler Selected**: `{handler.__name__}`", parse_mode="Markdown")
+
             # Шаг 4: Безопасный вызов обработчика с механизмом отката
             responses = []
             try:
                 all_possible_args = {
                     "session": self.session, "analysis": final_analysis,
-                    "user_id": user_id, "original_query": query, "debug_mode": False
+                    "user_id": user_id, "original_query": query, "debug_mode": debug_mode,
+                    "message": message
                 }
                 import inspect
                 handler_signature = inspect.signature(handler)
@@ -188,6 +212,10 @@ class GigaChatHandler:
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в GigaChatHandler.process_message: {e}", exc_info=True)
             await message.answer("Ой, что-то пошло не так на моей стороне.")
+        finally:
+            # Очищаем фидбек в самом конце, после отправки всех ответов
+            await feedback.cleanup()
+
 
     async def process_callback(self, callback_query: types.CallbackQuery):
         """Главный обработчик кнопок. Находит нужный обработчик и передает ему управление."""
@@ -256,6 +284,13 @@ class GigaChatHandler:
                     parse_mode=parse_mode
                 )
 
+            elif response_type == "debug":
+                # Отправляем отладочную информацию как есть, но экранируем для MarkdownV2 если нужно,
+                # или используем Markdown если там код
+                content = resp_data.get("content", "")
+                # Для debug сообщений лучше использовать Markdown (V1), так как там часто json блоки
+                await message.answer(content, parse_mode="Markdown")
+
     def _build_keyboard(self, buttons_data: list) -> InlineKeyboardMarkup | None:
         """Универсальный сборщик инлайн-клавиатур."""
         if not buttons_data: return None
@@ -298,7 +333,8 @@ class GigaChatHandler:
             "offset": new_offset
         }
 
-        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Пагинация: {ambiguous_term}", False)
+        debug_mode = get_user_settings(user_id).get("debug_mode", False)
+        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Пагинация: {ambiguous_term}", debug_mode)
         
         if responses and responses[0].get("type") == "clarification":
             resp_data = responses[0]
@@ -405,8 +441,9 @@ class GigaChatHandler:
         
         await context_manager.delete_context(fallback_key)
 
+        debug_mode = get_user_settings(user_id).get("debug_mode", False)
         logger.debug(f"[{user_id}] Повторный вызов `handle_get_picture` с упрощенным анализом: {simplified_analysis}")
-        responses = await handle_get_picture(self.session, simplified_analysis, user_id, False)
+        responses = await handle_get_picture(self.session, simplified_analysis, user_id, debug_mode)
         simulated_query = f"Упрощенный запрос (fallback): {object_nom}"
         await self.dialogue_manager.update_history(user_id, simulated_query, simplified_analysis, responses)
 
@@ -439,8 +476,9 @@ class GigaChatHandler:
         selected_object = options[selected_index]
         await cq.answer(f"Выбрано: {selected_object}")
 
+        debug_mode = get_user_settings(user_id).get("debug_mode", False)
         simulated_analysis = {"action": "describe", "primary_entity": {"name": selected_object, "type": "Biological"}}
-        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Уточнение: {selected_object}", False)
+        responses = await handle_get_description(self.session, simulated_analysis, user_id, f"Уточнение: {selected_object}", debug_mode)
         simulated_query = f"Выбор из уточнений: {selected_object}"
         await self.dialogue_manager.update_history(user_id, simulated_query, simulated_analysis, responses)
         await self._send_responses(cq.message, responses)

@@ -32,4 +32,4 @@ faiss_index_path/
 
 **/data/geo_place_synonyms.yml
 **/data/lookup/
-
+.agent/

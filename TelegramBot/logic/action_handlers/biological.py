@@ -1,11 +1,13 @@
 import aiohttp
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from aiogram import types
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.bot_utils import create_structured_response
+from utils.feedback_manager import FeedbackManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,13 @@ async def check_simplified_search(session: aiohttp.ClientSession, object_nom: st
         logger.warning(f"Ошибка проверки упрощенного запроса для {object_nom}: {e}")
         return False
 
-async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
+async def handle_get_picture(
+    session: aiohttp.ClientSession, 
+    analysis: dict, 
+    user_id: str, 
+    debug_mode: bool,
+    message: Optional[types.Message] = None
+) -> list:
     logger.info(f"--- Запуск handle_get_picture с analysis: {analysis} ---")
     
     primary_entity = analysis.get("primary_entity", {})
@@ -64,15 +72,32 @@ async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, use
     if not object_nom:
         return [{"type": "text", "content": "Не указан объект для поиска изображения."}]
 
-    features = {}
-    if attributes.get("season"): features["season"] = attributes["season"]
-    if attributes.get("habitat"): features["habitat"] = attributes["habitat"]
-    if attributes.get("state") == "цветение": features["flowering"] = True
-
-    url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
-    payload = {"species_name": object_nom, "features": features}
-
+    # Инициализируем FeedbackManager если есть message
+    feedback = FeedbackManager(message) if message else None
+    
     try:
+        # Показываем статус "загружает фото"
+        if feedback:
+            await feedback.start_action("upload_photo")
+            await feedback.send_progress_message(f"📸 Ищу изображения для «{object_nom}»...")
+        
+        features = {}
+        if attributes.get("season"): features["season"] = attributes["season"]
+        if attributes.get("habitat"): features["habitat"] = attributes["habitat"]
+        if attributes.get("state") == "цветение": features["flowering"] = True
+
+        url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
+        payload = {"species_name": object_nom, "features": features}
+
+        responses = []
+        if debug_mode:
+            debug_info = (
+                f"🐞 **API Request (Image Search)**\n"
+                f"**URL**: `{url}`\n"
+                f"**Payload**:\n```json\n{payload}\n```"
+            )
+            responses.append({"type": "debug", "content": debug_info})
+
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             api_data = await resp.json()
 
@@ -80,7 +105,12 @@ async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, use
                 logger.warning(f"[{user_id}] Изображения для '{object_nom}' с признаками {features} не найдены. Запуск логики fallback.")
                 
                 if not attributes:
-                    return [{"type": "text", "content": f"Извините, я не нашел изображений для «{object_nom}»."}]
+                    responses.append({"type": "text", "content": f"Извините, я не нашел изображений для «{object_nom}»."})
+                    return responses
+
+                # Обновляем сообщение о прогрессе
+                if feedback:
+                    await feedback.send_progress_message("🔍 Изучаю альтернативные варианты...")
 
                 fallback_options = []
                 if "season" in attributes:
@@ -97,7 +127,8 @@ async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, use
                     fallback_options.append({"text": "🖼️ Только объект", "callback_data": f"fallback:basic:{object_nom}"})
                 
                 if not fallback_options:
-                    return [{"type": "text", "content": f"Извините, не нашел изображений для «{object_nom}» с любыми комбинациями признаков."}]
+                    responses.append({"type": "text", "content": f"Извините, не нашел изображений для «{object_nom}» с любыми комбинациями признаков."})
+                    return responses
 
                 context_manager = RedisContextManager()
                 fallback_key = f"fallback_attributes:{user_id}"
@@ -107,9 +138,10 @@ async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, use
                 
                 buttons = [fallback_options[i:i+2] for i in range(0, len(fallback_options), 2)]
                 
-                return [{"type": "clarification", 
+                responses.append({"type": "clarification", 
                          "content": f"🖼️ К сожалению, у меня нет точных фотографий для вашего запроса.\n\nДавайте попробуем упростить? Вот что я нашел:",
-                         "buttons": buttons}]
+                         "buttons": buttons})
+                return responses
             
             user_messages = []
             images = api_data.get("images", [])
@@ -117,15 +149,26 @@ async def handle_get_picture(session: aiohttp.ClientSession, analysis: dict, use
             user_messages = [{"type": "image", "content": img["image_path"]} for img in images[:5] if isinstance(img, dict) and "image_path" in img]
             
             if not user_messages:
-                 return [{"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."}]
+                 responses.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."})
+                 return responses
             
-            return create_structured_response(api_data, user_messages)
+            responses.extend(create_structured_response(api_data, user_messages))
+            return responses
 
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_get_picture: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."}]
+        responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."})
+        return responses
     
-async def handle_get_description(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+    
+async def handle_get_description(
+    session: aiohttp.ClientSession, 
+    analysis: dict, 
+    user_id: str, 
+    original_query: str, 
+    debug_mode: bool,
+    message: Optional[types.Message] = None
+) -> list:
     """
     Обрабатывает запрос на получение текстового описания объекта.
     - Распознает неоднозначные ответы от API.
@@ -139,16 +182,34 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
 
     if not object_nom:
         return [{"type": "text", "content": "Не указан объект для поиска описания."}]
-        
-    find_url = f"{API_URLS['find_species_with_description']}"
-    payload = {"name": object_nom, "limit": 4, "offset": offset} 
-    logger.debug(f"[{user_id}] Запрос к `find_species_with_description` с payload: {payload}")
-
+    
+    # Инициализируем FeedbackManager если есть message
+    feedback = FeedbackManager(message) if message else None
+    
     try:
+        # Показываем статус "печатает"
+        if feedback:
+            await feedback.start_action("typing")
+            await feedback.send_progress_message(f"🔍 Ищу описание для «{object_nom}»...")
+        
+        find_url = f"{API_URLS['find_species_with_description']}"
+        payload = {"name": object_nom, "limit": 4, "offset": offset} 
+        logger.debug(f"[{user_id}] Запрос к `find_species_with_description` с payload: {payload}")
+
+        responses = []
+        if debug_mode:
+            debug_info = (
+                f"🐞 **API Request (Find Species)**\n"
+                f"**URL**: `{find_url}`\n"
+                f"**Payload**:\n```json\n{payload}\n```"
+            )
+            responses.append({"type": "debug", "content": debug_info})
+
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
             if not find_resp.ok:
                 logger.error(f"[{user_id}] API `find_species` вернул ошибку {find_resp.status} для '{object_nom}'")
-                return [{"type": "text", "content": f"Извините, произошла ошибка при поиске «{object_nom}»."}]
+                responses.append({"type": "text", "content": f"Извините, произошла ошибка при поиске «{object_nom}»."})
+                return responses
             
             data = await find_resp.json()
             status = data.get("status")
@@ -181,11 +242,12 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                 if system_buttons_row:
                     buttons.append(system_buttons_row)
 
-                return [{
+                responses.append({
                     "type": "clarification",
                     "content": f"Я знаю несколько видов для «{object_nom}». Уточните, какой именно вас интересует?",
                     "buttons": buttons
-                }]
+                })
+                return responses
             
             elif status == "found":
                 canonical_name = data.get("matches", [object_nom])[0]
@@ -199,6 +261,13 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                             f"&query={original_query}")
                 
                 logger.info(f"[{user_id}] Объект найден: '{canonical_name}'. Запрос описания по URL: {desc_url}")
+
+                if debug_mode:
+                    debug_info = (
+                        f"🐞 **API Request (Get Description)**\n"
+                        f"**URL**: `{desc_url}`"
+                    )
+                    responses.append({"type": "debug", "content": debug_info})
 
                 async with session.get(desc_url, timeout=DEFAULT_TIMEOUT) as desc_resp:
                     if desc_resp.ok:
@@ -219,11 +288,13 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                             logger.info(f"[{user_id}] Описание для '{canonical_name}' успешно найдено.")
                             user_messages.append({"type": "text", "content": text})
                         
-                        return create_structured_response(api_data, user_messages)
+                        responses.extend(create_structured_response(api_data, user_messages))
+                        return responses
 
                     elif desc_resp.status == 400:
                         desc_data = await desc_resp.json()
-                        return [{"type": "text", "content": desc_data.get("error", "Я не смог найти ответ")}]
+                        responses.append({"type": "text", "content": desc_data.get("error", "Я не смог найти ответ")})
+                        return responses
 
             logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено ни на одном из этапов.")
             
@@ -231,11 +302,14 @@ async def handle_get_description(session: aiohttp.ClientSession, analysis: dict,
                 logger.info(f"[{user_id}] Запускаем GigaChat fallback для запроса: '{original_query}'")
                 fallback_answer = await call_gigachat_fallback_service(session, original_query)
                 if fallback_answer: 
-                    return [{"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"}]
+                    responses.append({"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"})
+                    return responses
             
-            return [{"type": "text", "content": f"К сожалению, у меня нет описания для «{object_nom}»."}]
+            responses.append({"type": "text", "content": f"К сожалению, у меня нет описания для «{object_nom}»."})
+            return responses
 
     except Exception as e:
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
-        return [{"type": "text", "content": "Проблема с подключением к серверу описаний."}]
+        responses.append({"type": "text", "content": "Проблема с подключением к серверу описаний."})
+        return responses
     

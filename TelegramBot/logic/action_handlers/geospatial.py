@@ -2,11 +2,13 @@ import aiohttp
 import logging
 import time
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import quote
+from aiogram import types
 from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, STAND_SESSION_TIMEOUT
 from utils.settings_manager import get_user_settings, update_user_settings
 from utils.bot_utils import create_structured_response
+from utils.feedback_manager import FeedbackManager
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
 from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
@@ -15,9 +17,21 @@ from logic.stand_manager import is_stand_session_active
 logger = logging.getLogger(__name__)
 
 async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, analysis: dict, debug_mode: bool, geo_name: str = None) -> list:
-    async with session.post(f"{url}?debug_mode={str(debug_mode).lower()}", json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
+    full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
+    
+    responses = []
+    if debug_mode:
+        debug_info = (
+            f"🐞 **API Request (Map)**\n"
+            f"**URL**: `{full_url}`\n"
+            f"**Payload**:\n```json\n{payload}\n```"
+        )
+        responses.append({"type": "debug", "content": debug_info})
+
+    async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
         if not map_resp.ok: 
-            return [{"type": "text", "content": "Не удалось построить карту."}]
+            responses.append({"type": "text", "content": "Не удалось построить карту."})
+            return responses
 
         api_data = await map_resp.json()
         user_messages = []
@@ -43,7 +57,9 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
             user_messages.append(map_message)
         elif caption:
             user_messages.append({"type": "text", "content": caption})
-        return create_structured_response(api_data, user_messages)
+        
+        responses.extend(create_structured_response(api_data, user_messages))
+        return responses
 
 async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     object_nom = analysis.get("primary_entity", {}).get("name")
@@ -134,14 +150,24 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
         url = f"{API_URLS['show_map_infrastructure']}?debug_mode={str(debug_mode).lower()}"
         logger.info(f"Запрос к API инфраструктуры: {url} с payload: {payload}")
         
+        responses = []
+        if debug_mode:
+            debug_info = (
+                f"🐞 **API Request (Infrastructure Map)**\n"
+                f"**URL**: `{url}`\n"
+                f"**Payload**:\n```json\n{payload}\n```"
+            )
+            responses.append({"type": "debug", "content": debug_info})
+
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             content_type = resp.headers.get('Content-Type', '').lower()
             
             if 'application/json' not in content_type:
                 logger.error(f"API инфраструктуры вернул не JSON. Status: {resp.status}, Content-Type: {content_type}")
-                if resp.status == 404: return [{"type": "text", "content": f"Сервис поиска временно недоступен."}]
-                elif resp.status == 500: return [{"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."}]
-                else: return [{"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."}]
+                if resp.status == 404: responses.append({"type": "text", "content": f"Сервис поиска временно недоступен."})
+                elif resp.status == 500: responses.append({"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."})
+                else: responses.append({"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."})
+                return responses
 
             api_data = await resp.json()
 
@@ -177,7 +203,8 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
             if not resp.ok:
                 error_msg = api_data.get('error', f'Ошибка {resp.status}')
                 logger.error(f"API инфраструктуры вернул ошибку: {error_msg}")
-                return [{"type": "text", "content": f"Не удалось найти информацию: {error_msg}"}]
+                responses.append({"type": "text", "content": f"Не удалось найти информацию: {error_msg}"})
+                return responses
             
             user_messages = []
             
@@ -197,14 +224,17 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
                         text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(objects_list)
                 user_messages.append({"type": "text", "content": text_response})
 
-            return create_structured_response(api_data, user_messages)
+            responses.extend(create_structured_response(api_data, user_messages))
+            return responses
 
     except asyncio.TimeoutError:
         logger.error(f"Таймаут при запросе к API инфраструктуры")
-        return [{"type": "text", "content": "Сервер инфраструктуры не отвечает. Попробуйте позже."}]
+        responses.append({"type": "text", "content": "Сервер инфраструктуры не отвечает. Попробуйте позже."})
+        return responses
     except Exception as e:
         logger.error(f"Критическая ошибка в handle_draw_map_of_infrastructure: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."}]
+        responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."})
+        return responses
 
 async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
     geo_nom = analysis.get("secondary_entity", {}).get("name")
@@ -225,11 +255,21 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
             "object_subtype": object_subtype}
     logger.info(f"Запрос к `objects_in_polygon` с payload: {payload}")
     
+    responses = []
+    if debug_mode:
+        debug_info = (
+            f"🐞 **API Request (Objects in Polygon)**\n"
+            f"**URL**: `{url}`\n"
+            f"**Payload**:\n```json\n{payload}\n```"
+        )
+        responses.append({"type": "debug", "content": debug_info})
+    
     try:
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
                 logger.error(f"API `objects_in_polygon` вернул ошибку {resp.status} для '{geo_nom}'")
-                return [{"type": "text", "content": f"Не удалось найти информацию для '{geo_nom}'."}]
+                responses.append({"type": "text", "content": f"Не удалось найти информацию для '{geo_nom}'."})
+                return responses
 
             api_data = await resp.json()
             user_messages = []
@@ -272,13 +312,22 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
                 }
                 user_messages.append(clarification_message)
 
-            return create_structured_response(api_data, user_messages)
+            responses.extend(create_structured_response(api_data, user_messages))
+            return responses
 
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_objects_in_polygon`: {e}", exc_info=True)
-        return [{"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."}]
+        responses.append({"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."})
+        return responses
 
-async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, user_id: str, original_query: str, debug_mode: bool) -> list:
+async def handle_geo_request(
+    session: aiohttp.ClientSession, 
+    analysis: dict, 
+    user_id: str, 
+    original_query: str, 
+    debug_mode: bool,
+    message: Optional[types.Message] = None
+) -> list:
     primary_entity = analysis.get("primary_entity") or {}
     secondary_entity = analysis.get("secondary_entity") or {}
 
@@ -290,54 +339,72 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
     entity_category = primary_entity.get("category", "Достопримечательности")
     entity_subcategory = primary_entity.get("subcategory")
     
-    baikal_relation = determine_baikal_relation(
-        query=original_query,
-        entity_name=primary_entity.get("name", ""),
-        entity_type=primary_entity.get("type", "")
-    )
+    # Инициализируем FeedbackManager если естьmessage
+    feedback = FeedbackManager(message) if message else None
     
-    location_info = {"nearby_places": []}
-    
-    if baikal_relation:
-        import re
-        baikal_pattern = re.compile(r'байкал?[а-я]*')
-        if location_name and not baikal_pattern.search(location_name.lower()):
-            location_info["exact_location"] = location_name
-            location_info["region"] = ""
-        else:
+    try:
+        # Показываем статус "печатает"
+        if feedback:
+            await feedback.start_action("typing")
+            await feedback.send_progress_message(f"🗺️ Ищу информацию о {raw_entity_name or location_name}...")
+        
+        baikal_relation = determine_baikal_relation(
+            query=original_query,
+            entity_name=primary_entity.get("name", ""),
+            entity_type=primary_entity.get("type", "")
+        )
+        
+        location_info = {"nearby_places": []}
+        
+        if baikal_relation:
+            import re
+            baikal_pattern = re.compile(r'байкал?[а-я]*')
+            if location_name and not baikal_pattern.search(location_name.lower()):
+                location_info["exact_location"] = location_name
+                location_info["region"] = ""
+            else:
+                location_info["exact_location"] = ""
+                location_info["region"] = ""
+        elif location_name == "Байкал":
             location_info["exact_location"] = ""
             location_info["region"] = ""
-    elif location_name == "Байкал":
-        location_info["exact_location"] = ""
-        location_info["region"] = ""
-    else:
-        location_info["exact_location"] = location_name
-        location_info["region"] = ""
-    
-    geo_type_payload = {
-        "primary_type": [entity_category],
-        "specific_types": entity_subcategory
-    }
+        else:
+            location_info["exact_location"] = location_name
+            location_info["region"] = ""
         
-    payload = {
-        "location_info": location_info,
-        "geo_type": geo_type_payload
-    }
-    
-    if baikal_relation:
-        payload["baikal_relation"] = baikal_relation
-    
-    if should_include_object_name(raw_entity_name):
-        url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
-    else:
-        url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
-    logger.info(f"Запрос к {url} с payload: {payload}")
+        geo_type_payload = {
+            "primary_type": [entity_category],
+            "specific_types": entity_subcategory
+        }
+            
+        payload = {
+            "location_info": location_info,
+            "geo_type": geo_type_payload
+        }
+        
+        if baikal_relation:
+            payload["baikal_relation"] = baikal_relation
+        
+        if should_include_object_name(raw_entity_name):
+            url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
+        else:
+            url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+        logger.info(f"Запрос к {url} с payload: {payload}")
 
-    try:
+        responses = []
+        if debug_mode:
+            debug_info = (
+                f"🐞 **API Request (Geo Description)**\n"
+                f"**URL**: `{url}`\n"
+                f"**Payload**:\n```json\n{payload}\n```"
+            )
+            responses.append({"type": "debug", "content": debug_info})
+
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
                 logger.warning(f"Запрос к /object/description прошел с ошибкой - {resp.status}")
-                return [{"type": "text", "content": "Извините, информация по этому запросу временно недоступна."}]
+                responses.append({"type": "text", "content": "Извините, информация по этому запросу временно недоступна."})
+                return responses
             
             # [ИЗМЕНЕНИЕ] Шаг 2: Получаем и сохраняем полный ответ от API
             api_data = await resp.json()
@@ -409,11 +476,14 @@ async def handle_geo_request(session: aiohttp.ClientSession, analysis: dict, use
                  user_messages.append({"type": "text", "content": "К сожалению, по вашему запросу ничего не найдено."})
 
             # [ИЗМЕНЕНИЕ] Шаг 4: Вызываем помощника для упаковки метаданных
-            return create_structured_response(api_data, user_messages)
+            responses.extend(create_structured_response(api_data, user_messages))
+            return responses
 
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
-        return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."}]
+        responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."})
+        return responses
+
 
 async def handle_draw_map_of_list_stub(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
     """

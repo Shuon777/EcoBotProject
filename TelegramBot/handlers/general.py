@@ -22,11 +22,13 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     current_mode = user_settings.get("mode", "rasa")
     fallback_enabled = user_settings.get("gigachat_fallback", False)
     stoplist_enabled = user_settings.get("stoplist_enabled", True)
+    debug_mode_enabled = user_settings.get("debug_mode", False)
 
     rasa_button_text = "✅ Режим: Rasa" if current_mode == "rasa" else "Режим: Rasa"
     gigachat_button_text = "✅ Режим: GigaChat" if current_mode == "gigachat" else "Режим: GigaChat"
     fallback_status = "✅ Вкл" if fallback_enabled else "❌ Выкл"
     stoplist_status = "❌ Выкл" if stoplist_enabled else "✅ Вкл"
+    debug_status = "✅ Вкл" if debug_mode_enabled else "❌ Выкл"
 
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -38,6 +40,9 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     )
     keyboard.add(
         InlineKeyboardButton(f"Стоп-лист: {stoplist_status}", callback_data="toggle_stoplist")
+    )
+    keyboard.add(
+        InlineKeyboardButton(f"🐞 Debug Mode: {debug_status}", callback_data="toggle_debug")
     )
     if is_stand_session_active(user_id):
         keyboard.add(InlineKeyboardButton("❌ Отвязаться от стенда", callback_data="stand_detach"))
@@ -149,7 +154,7 @@ def register_general_handlers(dp: Dispatcher):
             "Вы успешно отвязались от стенда. Теперь все ответы будут приходить только сюда."
         )
 
-    @dp.callback_query_handler(lambda c: c.data in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback", "toggle_stoplist"])
+    @dp.callback_query_handler(lambda c: c.data in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback", "toggle_stoplist", "toggle_debug"])
     async def process_settings_callback(callback_query: types.CallbackQuery):
         user_id = str(callback_query.from_user.id)
         data = callback_query.data
@@ -172,6 +177,11 @@ def register_general_handlers(dp: Dispatcher):
             new_state = not current_stoplist_state
             update_user_settings(user_id, {"stoplist_enabled": new_state})
             await callback_query.answer(f"Стоп-лист {'включен' if new_state else 'выключен'}")
+        elif data == "toggle_debug":
+            current_debug_state = get_user_settings(user_id).get("debug_mode", False)
+            new_state = not current_debug_state
+            update_user_settings(user_id, {"debug_mode": new_state})
+            await callback_query.answer(f"Debug Mode {'включен' if new_state else 'выключен'}")
 
         keyboard = create_settings_keyboard(user_id)
         try:
