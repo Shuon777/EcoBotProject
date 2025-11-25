@@ -1,5 +1,3 @@
-# --- НАЧАЛО ФАЙЛА: utils/feedback_manager.py ---
-
 import logging
 import asyncio
 from typing import Optional
@@ -12,11 +10,15 @@ logger = logging.getLogger(__name__)
 class FeedbackManager:
     """
     Менеджер для управления фидбеком пользователю во время обработки запроса.
+    
     Поддерживает:
     - Отправку action-статусов (typing, upload_photo и т.д.)
     - Отправку промежуточных текстовых сообщений
     - Автоматическое удаление промежуточных сообщений
     """
+    
+    # Интервал обновления action-статуса (Telegram сбрасывает его через 5 секунд)
+    ACTION_REFRESH_INTERVAL = 5
     
     def __init__(self, message: types.Message):
         """
@@ -28,37 +30,34 @@ class FeedbackManager:
         self.message = message
         self.user_id = str(message.chat.id)
         self.bot = message.bot
-        self.feedback_messages = []  # Список промежуточных сообщений для удаления
-        self._action_task = None  # Задача для периодической отправки action
+        self.feedback_messages = []
+        self._action_task = None
         
     async def send_action(self, action: str = "typing"):
         """
-        Отправляет action-статус боту.
+        Отправляет action-статус боту (однократно).
         
         Args:
             action: Тип действия ('typing', 'upload_photo', 'upload_document', и т.д.)
         """
         try:
             await self.bot.send_chat_action(chat_id=self.user_id, action=action)
-            logger.debug(f"[{self.user_id}] Отправлен action: {action}")
         except Exception as e:
             logger.warning(f"[{self.user_id}] Не удалось отправить action '{action}': {e}")
     
-    async def _keep_action_alive(self, action: str, interval: int = 5):
+    async def _keep_action_alive(self, action: str):
         """
         Периодически отправляет action для поддержания статуса.
         Telegram автоматически убирает action через 5 секунд.
         
         Args:
             action: Тип действия
-            interval: Интервал между отправками в секундах
         """
         while True:
             try:
                 await self.send_action(action)
-                await asyncio.sleep(interval)
+                await asyncio.sleep(self.ACTION_REFRESH_INTERVAL)
             except asyncio.CancelledError:
-                logger.debug(f"[{self.user_id}] Action loop для '{action}' остановлен")
                 break
             except Exception as e:
                 logger.error(f"[{self.user_id}] Ошибка в action loop: {e}")
@@ -67,22 +66,16 @@ class FeedbackManager:
     async def start_action(self, action: str = "typing"):
         """
         Запускает непрерывную отправку action-статуса.
-        Останавливает предыдущий action, если он был запущен.
+        Автоматически останавливает предыдущий action, если он был запущен.
         
         Args:
             action: Тип действия
         """
-        # Останавливаем предыдущий action, если есть
         await self.stop_action()
-        
-        # Запускаем новый action loop
         self._action_task = asyncio.create_task(self._keep_action_alive(action))
-        logger.debug(f"[{self.user_id}] Запущен непрерывный action: {action}")
     
     async def stop_action(self):
-        """
-        Останавливает непрерывную отправку action-статуса.
-        """
+        """Останавливает непрерывную отправку action-статуса."""
         if self._action_task and not self._action_task.done():
             self._action_task.cancel()
             try:
@@ -90,7 +83,6 @@ class FeedbackManager:
             except asyncio.CancelledError:
                 pass
             self._action_task = None
-            logger.debug(f"[{self.user_id}] Action остановлен")
     
     async def send_progress_message(
         self, 
@@ -113,7 +105,7 @@ class FeedbackManager:
             sent_message = await self.message.answer(text, parse_mode=parse_mode)
             if not keep:
                 self.feedback_messages.append(sent_message)
-            logger.debug(f"[{self.user_id}] Отправлено промежуточное сообщение: {text[:50]}...")
+            logger.info(f"[{self.user_id}] Отправлено промежуточное сообщение: {text[:60]}")
             return sent_message
         except Exception as e:
             logger.error(f"[{self.user_id}] Ошибка при отправке промежуточного сообщения: {e}")
@@ -135,9 +127,9 @@ class FeedbackManager:
         """
         try:
             await message_to_update.edit_text(new_text, parse_mode=parse_mode)
-            logger.debug(f"[{self.user_id}] Обновлено промежуточное сообщение: {new_text[:50]}...")
+            logger.info(f"[{self.user_id}] Обновлено промежуточное сообщение: {new_text[:60]}")
         except MessageNotModified:
-            logger.debug(f"[{self.user_id}] Сообщение не изменилось, пропускаем обновление")
+            pass  # Сообщение не изменилось - это нормально
         except Exception as e:
             logger.error(f"[{self.user_id}] Ошибка при обновлении промежуточного сообщения: {e}")
     
@@ -146,21 +138,22 @@ class FeedbackManager:
         Удаляет все промежуточные сообщения и останавливает action.
         Вызывается после завершения обработки запроса.
         """
-        # Останавливаем action
         await self.stop_action()
         
-        # Удаляем промежуточные сообщения
+        deleted_count = 0
         for msg in self.feedback_messages:
             try:
                 await msg.delete()
-                logger.debug(f"[{self.user_id}] Удалено промежуточное сообщение: {msg.message_id}")
-            except (MessageToDeleteNotFound, MessageCantBeDeleted) as e:
-                logger.debug(f"[{self.user_id}] Не удалось удалить сообщение {msg.message_id}: {e}")
+                deleted_count += 1
+            except (MessageToDeleteNotFound, MessageCantBeDeleted):
+                pass  # Сообщение уже удалено или не может быть удалено
             except Exception as e:
                 logger.error(f"[{self.user_id}] Ошибка при удалении сообщения {msg.message_id}: {e}")
         
+        if deleted_count > 0:
+            logger.info(f"[{self.user_id}] Удалено промежуточных сообщений: {deleted_count}")
+        
         self.feedback_messages.clear()
-        logger.debug(f"[{self.user_id}] Cleanup завершен")
 
 
 class FeedbackContext:
@@ -173,7 +166,6 @@ class FeedbackContext:
         await feedback.send_progress_message("Ищу информацию в базе...")
         # ... выполнение долгой операции ...
         await feedback.send_progress_message("Обрабатываю результаты...")
-        # ... ещё операции ...
     # Автоматически вызовется cleanup
     ```
     """
@@ -197,14 +189,12 @@ class FeedbackContext:
         self.auto_start_action = auto_start_action
     
     async def __aenter__(self):
-        """Вход в контекст - запускаем action"""
+        """Вход в контекст - запускаем action."""
         if self.auto_start_action and self.action:
             await self.feedback.start_action(self.action)
         return self.feedback
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Выход из контекста - очищаем все"""
+        """Выход из контекста - очищаем все."""
         await self.feedback.cleanup()
         return False
-
-# --- КОНЕЦ ФАЙЛА: utils/feedback_manager.py ---

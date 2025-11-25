@@ -295,7 +295,7 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
                 ])
                 
             if api_data.get("static_map"):
-                logger.debug(f"Найдена карта для '{geo_nom}'. Отправка карты с проактивными кнопками.")
+                logger.info(f"Найдена карта для '{geo_nom}', отправка с кнопками")
                 clarification_message = {
                     "type": "clarification_map",
                     "static_map": api_data["static_map"],
@@ -304,7 +304,7 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
                 }
                 user_messages.append(clarification_message)
             else:
-                logger.debug(f"Карта не найдена для '{geo_nom}'. Отправка текста с проактивными кнопками.")
+                logger.info(f"Карта не найдена для '{geo_nom}', отправка текста с кнопками")
                 clarification_message = {
                     "type": "clarification",
                     "content": caption,

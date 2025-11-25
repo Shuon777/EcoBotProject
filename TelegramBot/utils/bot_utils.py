@@ -174,7 +174,8 @@ def create_structured_response(api_data: dict, responses: list) -> list:
     if responses and used_objects:
         # ...прикрепляем метаданные к первому сообщению.
         responses[0]['used_objects'] = used_objects
-        logging.getLogger(__name__).info(f"К ответу прикреплены used_objects: {used_objects}")
+        logging.getLogger(__name__).info(f"К ответу прикреплено used_objects: {len(used_objects)} шт.")
+        
         
     return responses
 

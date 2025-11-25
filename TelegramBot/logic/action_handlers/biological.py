@@ -63,11 +63,11 @@ async def handle_get_picture(
     debug_mode: bool,
     message: Optional[types.Message] = None
 ) -> list:
-    logger.info(f"--- Запуск handle_get_picture с analysis: {analysis} ---")
-    
     primary_entity = analysis.get("primary_entity", {})
     object_nom = primary_entity.get("name")
     attributes = analysis.get("attributes", {})
+    
+    logger.info(f"[{user_id}] handle_get_picture: объект='{object_nom}', атрибуты={list(attributes.keys())}")
     
     if not object_nom:
         return [{"type": "text", "content": "Не указан объект для поиска изображения."}]
@@ -149,9 +149,11 @@ async def handle_get_picture(
             user_messages = [{"type": "image", "content": img["image_path"]} for img in images[:5] if isinstance(img, dict) and "image_path" in img]
             
             if not user_messages:
+                 logger.warning(f"[{user_id}] Изображения не найдены для '{object_nom}'")
                  responses.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."})
                  return responses
             
+            logger.info(f"[{user_id}] Найдено {len(user_messages)} изображений для '{object_nom}'")
             responses.extend(create_structured_response(api_data, user_messages))
             return responses
 
@@ -179,6 +181,8 @@ async def handle_get_description(
     primary_entity = analysis.get("primary_entity", {})
     object_nom = primary_entity.get("name")
     offset = analysis.get("offset", 0)
+    
+    logger.info(f"[{user_id}] handle_get_description: объект='{object_nom}', offset={offset}")
 
     if not object_nom:
         return [{"type": "text", "content": "Не указан объект для поиска описания."}]
@@ -194,7 +198,7 @@ async def handle_get_description(
         
         find_url = f"{API_URLS['find_species_with_description']}"
         payload = {"name": object_nom, "limit": 4, "offset": offset} 
-        logger.debug(f"[{user_id}] Запрос к `find_species_with_description` с payload: {payload}")
+        logger.info(f"[{user_id}] Запрос к find_species_with_description: name='{object_nom}', offset={offset}")
 
         responses = []
         if debug_mode:
@@ -213,7 +217,7 @@ async def handle_get_description(
             
             data = await find_resp.json()
             status = data.get("status")
-            logger.debug(f"[{user_id}] Ответ от `find_species`: status='{status}', matches={data.get('matches')}")
+            logger.info(f"[{user_id}] Ответ find_species: status='{status}', найдено совпадений={len(data.get('matches', []))}")
 
             if status == "ambiguous":
                 matches = data.get("matches", [])
