@@ -161,6 +161,9 @@ async def handle_get_picture(
         logger.error(f"Непредвиденная ошибка в handle_get_picture: {e}", exc_info=True)
         responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."})
         return responses
+    finally:
+        if feedback:
+            await feedback.stop_action()
     
     
 async def handle_get_description(
@@ -316,4 +319,7 @@ async def handle_get_description(
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
         responses.append({"type": "text", "content": "Проблема с подключением к серверу описаний."})
         return responses
+    finally:
+        if feedback:
+            await feedback.stop_action()
     

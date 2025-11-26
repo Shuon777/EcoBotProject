@@ -1,68 +1,159 @@
 Запрос: "А расскажи про нее"
 Результат:
-{{"action": "describe", "primary_entity": null, "secondary_entity": null, "attributes": {{}}}}
+{
+  "_reasoning": "Пользователь запрашивает описание ('расскажи'). Объект не назван ('нее'), используется контекст.",
+  "action": "describe",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
 
 Запрос: "Где обитает эдельвейс около култука"
 Результат:
-{{"action": "find_nearby", "primary_entity": {{"name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}
+{
+  "_reasoning": "Запрос местоположения ('где обитает'). Объект 'эдельвейс' (Flora), локация 'Култук' (GeoPlace).",
+  "action": "find_nearby",
+  "primary_entity": { "name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": { "name": "Култук", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Найди иву возле Бодайбо"
 Результат:
-{{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}              
+{
+  "_reasoning": "Запрос поиска ('найди'). Объект 'ива' (Flora), локация 'Бодайбо' (GeoPlace).",
+  "action": "find_nearby",
+  "primary_entity": { "name": "ива", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": { "name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Покажи где около Култука обитает даурский ёж"
 Результат:
-{{"action": "find_nearby", "primary_entity": {{"name": "даурский ёж", "type": "Biological", "category": "Fauna", "subcategory": []}}, "secondary_entity": {{"name": "Култук", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }}   
-
-
-Запрос: "Покажи где растет ива около Бодайбо"
-Результат:
-{{"action": "find_nearby", "primary_entity": {{"name": "ива", "type": "Biological", "category": "Fauna", "subcategory": []}}, "secondary_entity": {{"name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": []}}, "attributes": {{}} }} 
+{
+  "_reasoning": "Запрос поиска ('где... обитает'). Объект 'даурский ёж' (Fauna), локация 'Култук' (GeoPlace).",
+  "action": "find_nearby",
+  "primary_entity": { "name": "даурский ёж", "type": "Biological", "category": "Fauna", "subcategory": [] },
+  "secondary_entity": { "name": "Култук", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Расскажи про байкальскую нерпу"
-Результат:  
-{{"action": "describe", "primary_entity": {{ "name": "байкальская нерпа", "type": "Biological", "category": "Fauna", "subcategory": [] }}, "secondary_entity": null, "attributes": {{}} }}
+Результат:
+{
+  "_reasoning": "Запрос описания ('расскажи'). Объект 'байкальская нерпа' (Fauna).",
+  "action": "describe",
+  "primary_entity": { "name": "байкальская нерпа", "type": "Biological", "category": "Fauna", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": {}
+}
 
 Запрос: "Покажи пихту сибирскую зимой"
-Результат:   
-{{"action": "show_image", "primary_entity": {{ "name": "пихта сибирская", "type": "Biological", "category": "Flora", "subcategory": [] }}, "secondary_entity": null, "attributes": {{ "season": "Зима" }} }}
+Результат:
+{
+  "_reasoning": "Запрос изображения ('покажи'). Объект 'пихта сибирская' (Flora). Атрибут 'зимой'.",
+  "action": "show_image",
+  "primary_entity": { "name": "пихта сибирская", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": { "season": "Зима" }
+}
 
 Запрос: "Какая флора растет на малом море"
-Результат:    
-{{"action": "list_items", "primary_entity": {{ "name": "флора", "type": "Biological", "category": "Flora", "subcategory": [] }}, "secondary_entity": {{ "name": "Малое море", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }}
+Результат:
+{
+  "_reasoning": "Запрос списка объектов ('какая флора'). Сущность 'флора' (Biological/Flora), локация 'Малое море' (GeoPlace).",
+  "action": "list_items",
+  "primary_entity": { "name": "флора", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": { "name": "Малое море", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Расскажи о музеях в Бодайбо"
-Результат:  
-{{"action": "list_items", "primary_entity": {{ "name": "музеи", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Музеи"] }}, "secondary_entity": {{ "name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }} 
+Результат:
+{
+  "_reasoning": "Запрос списка объектов ('о музеях'). Объект 'музеи' (Infrastructure/Достопримечательности/Музеи), локация 'Бодайбо'.",
+  "action": "list_items",
+  "primary_entity": { "name": "музеи", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Музеи"] },
+  "secondary_entity": { "name": "Бодайбо", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "А осенью?"
-Результат:  
-{{"action": "unknown", "primary_entity": null, "secondary_entity": null, "attributes": {{ "season": "Осень" }} }}
+Результат:
+{
+  "_reasoning": "Уточнение. Нет глагола действия, нет объекта. Только атрибут 'Осень'. Action unknown.",
+  "action": "unknown",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": { "season": "Осень" }
+}
 
 Запрос: "Покажи лиственницу сибирскую осенью на болоте"
-Результат:  
-{{"action": "show_image", "primary_entity": {{"name": "лиственница сибирская", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": null, "attributes": {{"season": "Осень", "habitat": "Болото"}} }}
-  
+Результат:
+{
+  "_reasoning": "Запрос фото ('покажи'). Объект 'лиственница сибирская' (Flora). Атрибуты: сезон 'Осень', место 'Болото'.",
+  "action": "show_image",
+  "primary_entity": { "name": "лиственница сибирская", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": { "season": "Осень", "habitat": "Болото" }
+}
+
 Запрос: "А где она растет?"
-Результат:      
-{{"action": "show_map", "primary_entity": null, "secondary_entity": null, "attributes": {{}} }}
+Результат:
+{
+  "_reasoning": "Запрос карты ('где растет'). Объект не назван ('она'), используется контекст.",
+  "action": "show_map",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
 
 Запрос: "что интересного есть рядом с поселком Баргузин?"
-Результат: 
-{{"action": "list_items", "primary_entity": {{ "name": "достопримечательности", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": [] }}, "secondary_entity": {{ "name": "Баргузин", "type": "GeoPlace", "category": "", "subcategory": [] }}, "attributes": {{}} }}
+Результат:
+{
+  "_reasoning": "Абстрактный запрос ('что интересного'). Объект 'достопримечательности' (Infrastructure), локация 'Баргузин'.",
+  "action": "list_items",
+  "primary_entity": { "name": "достопримечательности", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": [] },
+  "secondary_entity": { "name": "Баргузин", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "А копеечник зундукский?"
 Результат:
-{{"action": "unknown", "primary_entity": {{"name": "копеечник зундукский", "type": "Biological", "category": "Flora", "subcategory": []}}, "secondary_entity": null, "attributes": {{}} }}
+{
+  "_reasoning": "Назван только новый объект ('копеечник зундукский'). Действие не указано, берется из контекста.",
+  "action": "unknown",
+  "primary_entity": { "name": "копеечник зундукский", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": {}
+}
 
 Запрос: "Почему солнечную обсерваторию построили в Листвянке?"
 Результат:
-{"action": "describe", "primary_entity": {"name": "солнечная обсерватория", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Наука"]}, "secondary_entity": {"name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": []}, "attributes": {}}
+{
+  "_reasoning": "Вопрос о причине ('почему'), трактуем как описание. Объект 'солнечная обсерватория' (Infrastructure/Наука), локация 'Листвянка'.",
+  "action": "describe",
+  "primary_entity": { "name": "солнечная обсерватория", "type": "Infrastructure", "category": "Достопримечательности", "subcategory": ["Наука"] },
+  "secondary_entity": { "name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Покажи на карте флору около Листвянки"
 Результат:
-{"action": "list_items", "primary_entity": {"name": "флора", "type": "Biological", "category": "Flora", "subcategory": []}, "secondary_entity": {"name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": []}, "attributes": {}}
+{
+  "_reasoning": "Запрос 'покажи на карте', но объект - собирательное 'флора'. Это запрос списка объектов (list_items).",
+  "action": "list_items",
+  "primary_entity": { "name": "флора", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": { "name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
 
 Запрос: "Где растет эдельвейс?"
 Результат:
-{"action": "show_map", "primary_entity": {"name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": []}, "secondary_entity": null, "attributes": {}}
+{
+  "_reasoning": "Запрос ареала ('где растет'). Объект 'эдельвейс' (Flora).",
+  "action": "show_map",
+  "primary_entity": { "name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": {}
+}

@@ -328,6 +328,17 @@ async def handle_geo_request(
     debug_mode: bool,
     message: Optional[types.Message] = None
 ) -> list:
+    clean_query = analysis.get("search_query", original_query)
+    responses = []
+    if debug_mode:
+            debug_info = (
+                f"🐞 **Чистка запроса от информационного шума (LLM)**\n"
+                f"**original query**: ```text\n{original_query}```\n"
+                f"**clean query**: ```text\n{clean_query}```"
+            )
+            responses.append({"type": "debug", "content": debug_info})
+    logger.info(f"[{user_id}] Очищенный запрос для поиска: '{clean_query}' (Оригинал: '{original_query}')")
+
     primary_entity = analysis.get("primary_entity") or {}
     secondary_entity = analysis.get("secondary_entity") or {}
 
@@ -349,7 +360,7 @@ async def handle_geo_request(
             await feedback.send_progress_message(f"🗺️ Ищу информацию о {raw_entity_name or location_name}...")
         
         baikal_relation = determine_baikal_relation(
-            query=original_query,
+            query=clean_query,
             entity_name=primary_entity.get("name", ""),
             entity_type=primary_entity.get("type", "")
         )
@@ -386,12 +397,12 @@ async def handle_geo_request(
             payload["baikal_relation"] = baikal_relation
         
         if should_include_object_name(raw_entity_name):
-            url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
+            url = f"{API_URLS['find_geo_special_description']}?query={clean_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
         else:
-            url = f"{API_URLS['find_geo_special_description']}?query={original_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+            url = f"{API_URLS['find_geo_special_description']}?query={clean_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
         logger.info(f"Запрос к {url} с payload: {payload}")
 
-        responses = []
+        
         if debug_mode:
             debug_info = (
                 f"🐞 **API Request (Geo Description)**\n"
@@ -411,7 +422,6 @@ async def handle_geo_request(
 
             # --- Логика для стенда остается без изменений, она работает с `api_data` ---
             if is_stand_session_active(user_id):
-                # ... (весь ваш существующий код для стенда)
                 logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
                 
                 external_ids = []
@@ -460,13 +470,11 @@ async def handle_geo_request(
                     remaining_titles = []
                     for desc in descriptions[first_valid_index + 1:]:
                         if title := desc.get("title"):
-                            if title.strip():
-                                cleaned_title = title.strip().split('.')[0].strip()
-                                if cleaned_title:
-                                    remaining_titles.append(cleaned_title + ".")
+                            if cleaned_title := title.strip():
+                                remaining_titles.append(cleaned_title)
                         if len(remaining_titles) >= 5:
                             break
-                    
+
                     if remaining_titles:
                         title_list_str = "\n".join(f"• {title}" for title in remaining_titles)
                         full_title_message = f"Также могут быть интересны:\n{title_list_str}"
@@ -483,6 +491,9 @@ async def handle_geo_request(
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
         responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."})
         return responses
+    finally:
+        if feedback:
+            await feedback.stop_action()
 
 
 async def handle_draw_map_of_list_stub(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:

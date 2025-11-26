@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import ValidationError
+from .validator import AnalysisResponse
 
 from .prompts_structure.prompts import UniversalPrompts
 
@@ -134,39 +136,105 @@ class QueryAnalyzer:
         text_lower = text.lower()
         return any(phrase in text_lower for phrase in blocked_phrases)
 
+    def _extract_json_safe(self, text: str) -> Optional[str]:
+        """
+        Безопасно извлекает JSON из ответа LLM, очищая от Markdown и
+        исправляя проблему двойных скобок {{...}}.
+        """
+        if not text:
+            return None
+
+        text = text.strip()
+
+        # 1. Ищем границы JSON объекта: от первого '{' до последнего '}'
+        # Это автоматически отсекает Markdown-обертку (```json ... ```) и лишний текст.
+        start_idx = text.find('{')
+        end_idx = text.rfind('}')
+
+        if start_idx == -1 or end_idx == -1:
+            # Если скобок нет вообще
+            return None
+
+        # Вырезаем предполагаемый JSON
+        json_candidate = text[start_idx:end_idx + 1]
+
+        # 2. ХАК: Исправление двойных скобок {{...}}
+        # Валидный JSON-объект обычно начинается как { "key"...
+        # Если строка начинается строго с {{, значит модель ошиблась и добавила лишний слой.
+        if len(json_candidate) >= 2:
+            if json_candidate.startswith("{{") and json_candidate.endswith("}}"):
+                # Убираем по одному символу с краев
+                json_candidate = json_candidate[1:-1]
+
+        return json_candidate
+
     async def _make_llm_request(self, query: str, history_block: str) -> Optional[Dict[str, Any]]:
-        """Делает запрос к LLM и парсит результат"""
-        try:
-            prompt = UniversalPrompts.analysis_prompt()
-            chain = prompt | self.llm
-            response = await chain.ainvoke({
-                "query": query, 
-                "history_block": history_block, 
-                "actions": self.actions, 
-                "examples": self.examples, 
-                "types": self.types,
-                "flora": self.flora
-            })
-            
-            generated_text = response.content.strip()
-            
-            start_index = generated_text.find('{')
-            end_index = generated_text.rfind('}')
-            if start_index != -1 and end_index != -1:
-                json_text = generated_text[start_index:end_index+1]
-                parsed_json = json.loads(json_text)
-                logger.info(f"Запрос '{query}' успешно проанализирован: {json.dumps(parsed_json, ensure_ascii=False)}")
-                return parsed_json
-            else:
-                logger.warning(f"JSON не найден в ответе LLM для запроса '{query}'. Ответ: {generated_text}")
-                return None
+        """
+        Делает запрос к LLM с валидацией и автоматическим исправлением ошибок (Retry Loop).
+        """
+        MAX_RETRIES = 2  # Сколько раз даем шанс исправиться
+        
+        current_query_prompt = query
+        # Базовый промпт
+        prompt_template = UniversalPrompts.analysis_prompt()
+        chain = prompt_template | self.llm
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                # Логируем попытку
+                if attempt > 0:
+                    logger.info(f"🔄 Попытка исправления #{attempt} для запроса '{query}'")
+
+                response = await chain.ainvoke({
+                    "query": current_query_prompt, 
+                    "history_block": history_block, 
+                    "actions": self.actions, 
+                    "examples": self.examples, 
+                    "types": self.types,
+                    "flora": self.flora
+                })
                 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Ошибка парсинга JSON для запроса '{query}': {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(f"Непредвиденная ошибка при анализе запроса '{query}': {str(e)}")
-            return None
+                generated_text = response.content.strip()
+                # Используем наш безопасный экстрактор (который мы добавили на прошлом шаге)
+                json_text = self._extract_json_safe(generated_text)
+                
+                if not json_text:
+                    raise ValueError("JSON не найден в ответе LLM")
+
+                # Парсим JSON
+                parsed_json = json.loads(json_text)
+                
+                # --- ВАЛИДАЦИЯ PYDANTIC ---
+                # Это выбросит ошибку ValidationError, если структура неверна
+                validated_model = AnalysisResponse(**parsed_json)
+                
+                # Если всё ок, превращаем обратно в dict (exclude_none=False важно, чтобы null поля остались null)
+                result_dict = validated_model.model_dump(by_alias=True)
+                
+                logger.info(f"✅ Успешная валидация (Попытка {attempt}). Action: {result_dict.get('action')}")
+                return result_dict
+
+            except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                error_msg = str(e)
+                logger.warning(f"⚠️ Ошибка валидации на попытке {attempt}: {error_msg}")
+                
+                # Если это была последняя попытка - сдаемся
+                if attempt == MAX_RETRIES:
+                    logger.error(f"❌ Не удалось получить валидный ответ после {MAX_RETRIES} попыток.")
+                    return None
+                
+                # Если есть попытки - формируем "исправляющий" промпт для следующей итерации
+                # Мы добавляем сообщение об ошибке к тексту запроса, эмулируя диалог
+                current_query_prompt = (
+                    f"{query}\n\n"
+                    f"SYSTEM ERROR: Твой предыдущий ответ содержал ошибку: {error_msg}\n"
+                    f"Исправь JSON и верни его снова. Убедись, что 'subcategory' это массив, а 'type' правильный."
+                )
+            
+            except Exception as e:
+                logger.error(f"Критическая ошибка LLM: {e}", exc_info=True)
+                return None
+        return None
 
     async def analyze_query(self, query: str, history: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
