@@ -250,7 +250,7 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
     
     url = f"{API_URLS['objects_in_polygon']}?debug_mode={str(debug_mode).lower()}"
     payload = {"name": geo_nom, 
-            "buffer_radius_km": 5, 
+            "buffer_radius_km": 1, 
             "object_type": "biological_entity", 
             "object_subtype": object_subtype}
     logger.info(f"Запрос к `objects_in_polygon` с payload: {payload}")
@@ -359,133 +359,145 @@ async def handle_geo_request(
             await feedback.start_action("typing")
             await feedback.send_progress_message(f"🗺️ Ищу информацию о {raw_entity_name or location_name}...")
         
-        baikal_relation = determine_baikal_relation(
-            query=clean_query,
-            entity_name=primary_entity.get("name", ""),
-            entity_type=primary_entity.get("type", "")
-        )
-        
-        location_info = {"nearby_places": []}
-        
-        if baikal_relation:
-            import re
-            baikal_pattern = re.compile(r'байкал?[а-я]*')
-            if location_name and not baikal_pattern.search(location_name.lower()):
-                location_info["exact_location"] = location_name
-                location_info["region"] = ""
-            else:
+        queries_to_try = [original_query]
+        if clean_query != original_query:
+            queries_to_try.append(clean_query)
+
+        api_data = None
+        success = False
+
+        for i, query_text in enumerate(queries_to_try):
+            baikal_relation = determine_baikal_relation(
+                query=query_text,
+                entity_name=primary_entity.get("name", ""),
+                entity_type=primary_entity.get("type", "")
+            )
+            
+            location_info = {"nearby_places": []}
+            
+            if baikal_relation:
+                import re
+                baikal_pattern = re.compile(r'байкал?[а-я]*')
+                if location_name and not baikal_pattern.search(location_name.lower()):
+                    location_info["exact_location"] = location_name
+                    location_info["region"] = ""
+                else:
+                    location_info["exact_location"] = ""
+                    location_info["region"] = ""
+            elif location_name == "Байкал":
                 location_info["exact_location"] = ""
                 location_info["region"] = ""
-        elif location_name == "Байкал":
-            location_info["exact_location"] = ""
-            location_info["region"] = ""
-        else:
-            location_info["exact_location"] = location_name
-            location_info["region"] = ""
-        
-        geo_type_payload = {
-            "primary_type": [entity_category],
-            "specific_types": entity_subcategory
-        }
+            else:
+                location_info["exact_location"] = location_name
+                location_info["region"] = ""
             
-        payload = {
-            "location_info": location_info,
-            "geo_type": geo_type_payload
-        }
-        
-        if baikal_relation:
-            payload["baikal_relation"] = baikal_relation
-        
-        if should_include_object_name(raw_entity_name):
-            url = f"{API_URLS['find_geo_special_description']}?query={clean_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
-        else:
-            url = f"{API_URLS['find_geo_special_description']}?query={clean_query}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
-        logger.info(f"Запрос к {url} с payload: {payload}")
-
-        
-        if debug_mode:
-            debug_info = (
-                f"🐞 **API Request (Geo Description)**\n"
-                f"**URL**: `{url}`\n"
-                f"**Payload**:\n```json\n{payload}\n```"
-            )
-            responses.append({"type": "debug", "content": debug_info})
-
-        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
-            if not resp.ok:
-                logger.warning(f"Запрос к /object/description прошел с ошибкой - {resp.status}")
-                responses.append({"type": "text", "content": "Извините, информация по этому запросу временно недоступна."})
-                return responses
+            geo_type_payload = {
+                "primary_type": [entity_category],
+                "specific_types": entity_subcategory
+            }
+                
+            payload = {
+                "location_info": location_info,
+                "geo_type": geo_type_payload
+            }
             
-            # [ИЗМЕНЕНИЕ] Шаг 2: Получаем и сохраняем полный ответ от API
-            api_data = await resp.json()
+            if baikal_relation:
+                payload["baikal_relation"] = baikal_relation
+            
+            if should_include_object_name(raw_entity_name):
+                url = f"{API_URLS['find_geo_special_description']}?query={query_text}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}&object_name={raw_entity_name}"
+            else:
+                url = f"{API_URLS['find_geo_special_description']}?query={query_text}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+            logger.info(f"Запрос к {url} с payload: {payload}")
 
-            # --- Логика для стенда остается без изменений, она работает с `api_data` ---
-            if is_stand_session_active(user_id):
-                logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
-                
-                external_ids = []
-                if "external_ids" in api_data and isinstance(api_data.get("external_ids"), list):
-                    external_ids = api_data["external_ids"]
-                
-                if external_ids:
-                    logger.info(f"[{user_id}] Найдено {len(external_ids)} external_id для отправки: {external_ids}")
-                    stand_payload = {
-                        "items": [{"id": ext_id} for ext_id in external_ids],
-                        "secret_key": STAND_SECRET_KEY
-                    }
-                    try:
-                        stand_url = API_URLS['stand_endpoint']
-                        async with session.post(stand_url, json=stand_payload, timeout=10) as stand_resp:
-                            if stand_resp.ok:
-                                logger.info(f"[{user_id}] Данные успешно отправлены на эндпоинт стенда. Статус: {stand_resp.status}")
-                            else:
-                                stand_text = await stand_resp.text()
-                                logger.warning(f"[{user_id}] Эндпоинт стенда вернул ошибку {stand_resp.status}: {stand_text}")
-                    except Exception as e:
-                        logger.error(f"[{user_id}] Ошибка при отправке данных на эндпоинт стенда: {e}", exc_info=True)
+            if debug_mode:
+                debug_info = (
+                    f"🐞 **API Request (Geo Description)**\n"
+                    f"**URL**: `{url}`\n"
+                    f"**Payload**:\n```json\n{payload}\n```"
+                )
+                responses.append({"type": "debug", "content": debug_info})
+
+            async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+                if resp.ok:
+                    api_data = await resp.json()
+                    success = True
+                    break
                 else:
-                    logger.info(f"[{user_id}] В ответе API find_geo_special_description не найдено 'external_id' в meta_info. Дополнительный запрос не выполняется.")
+                    if resp.status in [400, 404] and i < len(queries_to_try) - 1:
+                        logger.warning(f"Запрос с '{query_text}' вернул ошибку {resp.status}. Пробуем очищенный запрос...")
+                        continue
+                    
+                    logger.warning(f"Запрос к /object/description прошел с ошибкой - {resp.status}")
+                    responses.append({"type": "text", "content": "Извините, информация по этому запросу временно недоступна."})
+                    return responses
+
+        # --- Логика для стенда остается без изменений, она работает с `api_data` ---
+        if is_stand_session_active(user_id):
+            logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
+            
+            external_ids = []
+            if "external_ids" in api_data and isinstance(api_data.get("external_ids"), list):
+                external_ids = api_data["external_ids"]
+            
+            if external_ids:
+                logger.info(f"[{user_id}] Найдено {len(external_ids)} external_id для отправки: {external_ids}")
+                stand_payload = {
+                    "items": [{"id": ext_id} for ext_id in external_ids],
+                    "secret_key": STAND_SECRET_KEY
+                }
+                try:
+                    stand_url = API_URLS['stand_endpoint']
+                    async with session.post(stand_url, json=stand_payload, timeout=10) as stand_resp:
+                        if stand_resp.ok:
+                            logger.info(f"[{user_id}] Данные успешно отправлены на эндпоинт стенда. Статус: {stand_resp.status}")
+                        else:
+                            stand_text = await stand_resp.text()
+                            logger.warning(f"[{user_id}] Эндпоинт стенда вернул ошибку {stand_resp.status}: {stand_text}")
+                except Exception as e:
+                    logger.error(f"[{user_id}] Ошибка при отправке данных на эндпоинт стенда: {e}", exc_info=True)
+            else:
+                logger.info(f"[{user_id}] В ответе API find_geo_special_description не найдено 'external_id' в meta_info. Дополнительный запрос не выполняется.")
 
 
-            # [ИЗМЕНЕНИЕ] Шаг 3: Обрабатываем ответ и готовим сообщения для пользователя
-            user_messages = []
+        # [ИЗМЕНЕНИЕ] Шаг 3: Обрабатываем ответ и готовим сообщения для пользователя
+        user_messages = []
 
-            gigachat_answer = api_data.get("gigachat_answer")
-            if gigachat_answer and gigachat_answer.strip():
-                logger.info("Используем ответ от GigaChat.")
-                user_messages.append({"type": "text", "content": gigachat_answer.strip()})
+        gigachat_answer = api_data.get("gigachat_answer")
+        if gigachat_answer and gigachat_answer.strip():
+            logger.info("Используем ответ от GigaChat.")
+            user_messages.append({"type": "text", "content": gigachat_answer.strip()})
 
-            elif descriptions := api_data.get("descriptions"):
-                logger.info("Ответ GigaChat отсутствует. Ищем в 'descriptions'.")
-                first_valid_index = -1
-                for i, desc in enumerate(descriptions):
-                    if content := desc.get("content"):
-                        if content.strip():
-                            user_messages.append({"type": "text", "content": content.strip()})
-                            first_valid_index = i
-                            break
-                
-                if first_valid_index != -1:
-                    remaining_titles = []
-                    for desc in descriptions[first_valid_index + 1:]:
-                        if title := desc.get("title"):
-                            if cleaned_title := title.strip():
-                                remaining_titles.append(cleaned_title)
-                        if len(remaining_titles) >= 5:
-                            break
+        elif descriptions := api_data.get("descriptions"):
+            logger.info("Ответ GigaChat отсутствует. Ищем в 'descriptions'.")
+            first_valid_index = -1
+            for i, desc in enumerate(descriptions):
+                if content := desc.get("content"):
+                    if content.strip():
+                        user_messages.append({"type": "text", "content": content.strip()})
+                        first_valid_index = i
+                        break
+            
+            if first_valid_index != -1:
+                remaining_titles = []
+                for desc in descriptions[first_valid_index + 1:]:
+                    if title := desc.get("title"):
+                        if cleaned_title := title.strip():
+                            remaining_titles.append(cleaned_title)
+                    if len(remaining_titles) >= 5:
+                        break
 
-                    if remaining_titles:
-                        title_list_str = "\n".join(f"• {title}" for title in remaining_titles)
-                        full_title_message = f"Также могут быть интересны:\n{title_list_str}"
-                        user_messages.append({"type": "text", "content": full_title_message})
+                if remaining_titles:
+                    title_list_str = "\n".join(f"• {title}" for title in remaining_titles)
+                    full_title_message = f"Также могут быть интересны:\n{title_list_str}"
+                    user_messages.append({"type": "text", "content": full_title_message})
 
-            if not user_messages:
-                 user_messages.append({"type": "text", "content": "К сожалению, по вашему запросу ничего не найдено."})
+        if not user_messages:
+             user_messages.append({"type": "text", "content": "К сожалению, по вашему запросу ничего не найдено."})
 
-            # [ИЗМЕНЕНИЕ] Шаг 4: Вызываем помощника для упаковки метаданных
-            responses.extend(create_structured_response(api_data, user_messages))
-            return responses
+        # [ИЗМЕНЕНИЕ] Шаг 4: Вызываем помощника для упаковки метаданных
+        responses.extend(create_structured_response(api_data, user_messages))
+        return responses
 
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)

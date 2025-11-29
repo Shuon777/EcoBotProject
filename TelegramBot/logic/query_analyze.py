@@ -227,8 +227,11 @@ class QueryAnalyzer:
                 # Мы добавляем сообщение об ошибке к тексту запроса, эмулируя диалог
                 current_query_prompt = (
                     f"{query}\n\n"
-                    f"SYSTEM ERROR: Твой предыдущий ответ содержал ошибку: {error_msg}\n"
-                    f"Исправь JSON и верни его снова. Убедись, что 'subcategory' это массив, а 'type' правильный."
+                    f"SYSTEM ERROR: Твой предыдущий ответ содержал ошибку валидации:\n{error_msg}\n\n"
+                    f"ЗАДАЧА: Исправь JSON и верни его ПОЛНОСТЬЮ.\n"
+                    f"1. Не забудь поле `search_query`.\n"
+                    f"2. Убедись, что 'type' это Biological, GeoPlace или Infrastructure (не Unknown).\n"
+                    f"3. Верни валидный JSON."
                 )
             
             except Exception as e:

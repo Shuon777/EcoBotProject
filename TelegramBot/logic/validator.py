@@ -48,6 +48,10 @@ class Entity(BaseModel):
 
     @model_validator(mode='after')
     def validate_logic(self):
+
+        if not self.name:
+            raise ValueError("Entity must have a 'name'.")
+
         # 1. Если Biological, subcategory должна быть пустой
         if self.type == "Biological":
             if self.subcategory:

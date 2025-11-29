@@ -80,11 +80,17 @@ class GigaChatHandler:
 
     def _find_handler_for_action(self, action: str, primary_entity: dict) -> ActionHandler | None:
         """Находит подходящий обработчик для действия и типа сущности."""
-        if not action or action == "unknown":
-            return None
         
+        # [НОВОЕ] Перехват Unknown
         entity_type = primary_entity.get("type", "ANY") if primary_entity else "ANY"
-        
+        entity_name = primary_entity.get("name", "") if primary_entity else ""
+
+        if entity_type == "Unknown":
+            # Используем lambda или partial, чтобы адаптировать сигнатуру, 
+            # или просто вернем функцию, которая принимает **kwargs
+            return self._handle_unknown_entity_wrapper
+            
+        # ... старый код ...
         # Сначала ищем точное совпадение (action, entity_type)
         handler = self.action_handlers.get((action, entity_type))
         if handler:
@@ -157,7 +163,7 @@ class GigaChatHandler:
                     await button_handler(fake_cq)
                     return
 
-                await feedback.send_progress_message("🔍 Понял ваш запрос, анализирую...")
+                await feedback.send_progress_message("🔍 Получил ваш запрос, анализирую...")
                 
                 # Шаг 1: LLM-анализ запроса
                 analysis = await self.qa.analyze_query(query, history=latest_history)
@@ -596,3 +602,20 @@ class GigaChatHandler:
         await self.dialogue_manager.update_history(user_id, simulated_query, simulated_analysis, responses)
         await self._send_responses(cq.message, responses)
         await context_manager.delete_context(options_key)
+
+        
+    async def _handle_unknown_entity(self, message: types.Message, entity_name: str, **kwargs):
+            """Обработчик для сущностей, которые не относятся к домену Байкала."""
+            text = (
+                f"🤔 Я изучаю Байкал, но про «{entity_name}» в контексте "
+                f"флоры, фауны или достопримечательностей озера я ничего не знаю.\n\n"
+                f"Попробуйте спросить о чем-то другом."
+            )
+            return [{"type": "text", "content": text}] # Возвращаем для истории
+    
+    async def _handle_unknown_entity_wrapper(self, message: types.Message, analysis: dict, **kwargs):
+        """Обертка, чтобы сигнатура совпадала с другими хендлерами."""
+        entity_name = analysis.get("primary_entity", {}).get("name", "этот объект")
+        return await self._handle_unknown_entity(message, entity_name)
+
+  
