@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import ValidationError
 from .validator import AnalysisResponse
 
@@ -238,6 +239,75 @@ class QueryAnalyzer:
                 logger.error(f"Критическая ошибка LLM: {e}", exc_info=True)
                 return None
         return None
+    
+    async def answer_general_question(self, query: str) -> str:
+        """
+        Генерирует ответ на общие вопросы о боте (Кто ты? Что умеешь?),
+        следуя заданной персоне и инструкции.
+        """
+        system_prompt = (
+            "Ты — Эко-ассистент по поиску объектов флоры и фауны (ОФФ) в Прибайкалье.\n"
+            "Твоя база знаний основана на данных Байкальского музея СО РАН.\n\n"
+            "Твоя задача — объяснить пользователю, кто ты и как тобой пользоваться.\n"
+            "Следуй этой структуре ответа:\n"
+            "1. Представься, упомянув, что ты работаешь на данных Байкальского музея СО РАН.\n"
+            "2. Скажи: «Я могу отвечать на вопросы следующего типа:» и приведи список шаблонов:\n"
+            "   — Расскажи о [название вида] (получить описание)\n"
+            "   — Как выглядит [название] (поиск фото)\n"
+            "   — Где растет/обитает [название] (карта ареала)\n"
+            "   — Что обитает рядом с [Локация] (поиск по месту)\n"
+            "   — Список [категория] в [Локация] (например, музеи в Иркутске)\n\n"
+            "Отвечай дружелюбно, но по делу. Не придумывай функции, которых нет в списке."
+        )
+
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=query)
+            ]
+            
+            logger.info(f"Генерация ответа 'О боте' для запроса: {query}")
+            response = await self.llm.ainvoke(messages)
+            return response.content.strip()
+
+        except Exception as e:
+            logger.error(f"Ошибка при генерации ответа о боте: {e}", exc_info=True)
+            # Фоллбэк, если генерация сломалась
+            return (
+                "Я бот по поиску флоры и фауны Прибайкалья на основе данных Байкальского музея СО РАН.\n"
+                "Я умею искать описания, фото и карты ареалов обитания, а также подсказывать, "
+                "какие животные и растения есть в конкретных местах."
+            )
+    
+    async def reply_to_small_talk(self, query: str) -> str:
+        """
+        Генерирует ответ на приветствия, благодарности и оффтоп.
+        """
+        system_prompt = (
+            "Ты — дружелюбный Эко-ассистент по флоре и фауне Байкала. Твоя база знаний — Байкальский музей СО РАН.\n"
+            "Твоя задача — поддержать короткий разговор (Small Talk).\n\n"
+            "Правила:\n"
+            "1. Если это приветствие -> Поздоровайся и расскажи кто ты.\n"
+            "2. Если это благодарность -> Скажи «Пожалуйста» или «Рад помочь».\n"
+            "3. Если вопрос «Как дела?» -> Ответь позитивно, упомяни, что готов работать.\n"
+            "4. Если тема НЕ касается природы, Байкала или твоих функций (оффтоп) -> Вежливо скажи, что ты разбираешься только в флоре и фауне Байкала.\n"
+            "5. Отвечай кратко (1-2 предложения)."
+            "6. Твой ответ на сообщение НЕ должен содержать вопрос."
+        )
+
+        try:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=query)
+            ]
+            
+            # Используем немного выше температуру (по умолчанию), чтобы ответы были живее
+            response = await self.llm.ainvoke(messages)
+            return response.content.strip()
+
+        except Exception as e:
+            logger.error(f"Ошибка при генерации Small Talk: {e}", exc_info=True)
+            return "Здравствуйте! Я готов помочь вам узнать больше о природе Байкала."
 
     async def analyze_query(self, query: str, history: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """

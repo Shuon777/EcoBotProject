@@ -84,7 +84,7 @@ async def handle_get_picture(
         features = {}
         if attributes.get("season"): features["season"] = attributes["season"]
         if attributes.get("habitat"): features["habitat"] = attributes["habitat"]
-        if attributes.get("state") == "цветение": features["flowering"] = True
+        if attributes.get("fruits_present"): features["fruits_present"] = attributes["fruits_present"]
 
         url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
         payload = {"species_name": object_nom, "features": features}

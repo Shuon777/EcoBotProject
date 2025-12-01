@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from urllib.parse import quote
 from aiogram import types
-from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, STAND_SESSION_TIMEOUT
+from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, TIMEOUT_FOR_OBJECTS_IN_POLYGON
 from utils.settings_manager import get_user_settings, update_user_settings
 from utils.bot_utils import create_structured_response
 from utils.feedback_manager import FeedbackManager
@@ -265,7 +265,7 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
         responses.append({"type": "debug", "content": debug_info})
     
     try:
-        async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+        async with session.post(url, json=payload, timeout=TIMEOUT_FOR_OBJECTS_IN_POLYGON) as resp:
             if not resp.ok:
                 logger.error(f"API `objects_in_polygon` вернул ошибку {resp.status} для '{geo_nom}'")
                 responses.append({"type": "text", "content": f"Не удалось найти информацию для '{geo_nom}'."})

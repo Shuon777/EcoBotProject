@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 VALID_ACTIONS = [
     "describe", "show_image", "show_map", "find_nearby", 
-    "list_items", "count_items", "unknown"
+    "list_items", "count_items", "get_help", "small_talk", "unknown"
 ]
 
 VALID_TYPES = ["Biological", "GeoPlace", "Infrastructure", "Unknown"]

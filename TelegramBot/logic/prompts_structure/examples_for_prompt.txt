@@ -78,6 +78,26 @@
   "attributes": {}
 }
 
+Запрос: "Покажи кедр на берегу"
+Результат:
+{
+  "_reasoning": "Запрос картинки ('Покажи'). Объект 'кедр' (Biological/Flora), признак 'на берегу' -> 'Побережье'.",
+  "action": "show_image",
+  "primary_entity": { "name": "кедр", "type": "Biological", "category": "Flora" },
+  "secondary_entity": null,
+  "attributes": { "habitat": "Побережье" }
+}
+
+Запрос: "Покажи шишку лиственницы сибирской"
+Результат:
+{
+  "_reasoning": "Запрос картинки ('Покажи'). Объект 'лиственница сибирская' (Biological/Flora), признак 'шишка'.",
+  "action": "show_image",
+  "primary_entity": { "name": "лиственница сибирская", "type": "Biological", "category": "Flora" },
+  "secondary_entity": null,
+  "attributes": { "fruits_present": "Шишка" }
+}
+
 Запрос: "А осенью?"
 Результат:
 {
@@ -154,6 +174,83 @@
   "_reasoning": "Запрос ареала ('где растет'). Объект 'эдельвейс' (Flora).",
   "action": "show_map",
   "primary_entity": { "name": "эдельвейс", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Что ты умеешь?"
+Результат:
+{
+  "_reasoning": "Вопрос о возможностях бота.",
+  "search_query": "возможности бота",
+  "action": "get_help",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Как тобой пользоваться?"
+Результат:
+{
+  "_reasoning": "Запрос инструкции по использованию.",
+  "search_query": "инструкция по использованию",
+  "action": "get_help",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Ты кто такой?"
+Результат:
+{
+  "_reasoning": "Вопрос о личности бота.",
+  "search_query": "кто ты",
+  "action": "get_help",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Нужна помощь"
+Результат:
+{
+  "_reasoning": "Явный запрос помощи.",
+  "search_query": "помощь",
+  "action": "get_help",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Привет!"
+Результат:
+{
+  "_reasoning": "Приветствие.",
+  "search_query": "привет",
+  "action": "small_talk",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Огромное спасибо"
+Результат:
+{
+  "_reasoning": "Благодарность.",
+  "search_query": "спасибо",
+  "action": "small_talk",
+  "primary_entity": null,
+  "secondary_entity": null,
+  "attributes": {}
+}
+
+Запрос: "Как у тебя дела?"
+Результат:
+{
+  "_reasoning": "Смол-толк.",
+  "search_query": "как дела",
+  "action": "small_talk",
+  "primary_entity": null,
   "secondary_entity": null,
   "attributes": {}
 }

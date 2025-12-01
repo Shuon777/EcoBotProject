@@ -2,6 +2,7 @@
 from aiogram import types
 import re
 import logging
+import html  # <--- ДОБАВЛЕНО
 
 logger = logging.getLogger(__name__)
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
@@ -12,57 +13,40 @@ async def send_long_message(message: types.Message, text: str, parse_mode: str =
     Старается не разрывать слова и строки.
     Клавиатура (reply_markup) прикрепляется к последнему сообщению.
     """
-    # Проверка на пустой текст остается
     if not text or not text.strip():
         logger.warning(f"Попытка отправить пустое сообщение для чата {message.chat.id}. Отправка отменена.")
         return
 
     message_chunks = []
     
-    # ---> [НАЧАЛО НОВОЙ "УМНОЙ" ЛОГИКИ РАЗБИЕНИЯ]
     while len(text) > 0:
         if len(text) <= TELEGRAM_MAX_MESSAGE_LENGTH:
             message_chunks.append(text)
             break
 
-        # Берем срез текста, не превышающий лимит
         chunk = text[:TELEGRAM_MAX_MESSAGE_LENGTH]
-        
-        # Ищем лучшую точку для разрыва, двигаясь от конца среза к началу
         split_pos = -1
 
-        # 1. Предпочитаем разрыв по переносу строки
         possible_split = chunk.rfind('\n')
         if possible_split != -1:
             split_pos = possible_split
-        
-        # 2. Если нет переноса, ищем последний пробел
         else:
             possible_split = chunk.rfind(' ')
             if possible_split != -1:
                 split_pos = possible_split
 
-        # 3. Если не найдено ни переносов, ни пробелов (очень длинное слово),
-        # то вынужденно режем по лимиту.
         if split_pos == -1:
             split_pos = TELEGRAM_MAX_MESSAGE_LENGTH
         
-        # Добавляем кусок в список и готовим оставшийся текст для следующей итерации
         message_chunks.append(text[:split_pos])
-        text = text[split_pos:].lstrip() # .lstrip() убирает пробелы/переносы в начале следующего куска
+        text = text[split_pos:].lstrip()
 
-    # ---> [КОНЕЦ НОВОЙ ЛОГИКИ]
-
-    # Отправка сообщений остается прежней
-    # Отправляем все части, кроме последней
     for i in range(len(message_chunks) - 1):
         if message_chunks[i]:
             await message.answer(message_chunks[i], parse_mode=parse_mode, disable_web_page_preview=True)
     
-    # Отправляем последнюю часть с клавиатурой (если она есть)
     if message_chunks and message_chunks[-1]:
         await message.answer(message_chunks[-1], parse_mode=parse_mode, disable_web_page_preview=True, reply_markup=reply_markup)
-                        
 
 def normalize_message(msg: dict) -> dict:
     """
@@ -77,7 +61,6 @@ def normalize_message(msg: dict) -> dict:
     if "attachment" in msg and msg["attachment"].get("type") == "file":
         result["file"] = msg["attachment"]["payload"]["url"]
     
-    # Поддержка формата custom от Rasa
     if "custom" in msg:
         custom = msg["custom"]
         if "text" in custom: result["text"] = custom["text"]
@@ -95,8 +78,7 @@ def normalize_message(msg: dict) -> dict:
 
 async def send_normalized_message(message: types.Message, norm: dict):
     """
-    Отправляет нормализованное сообщение от Rasa, используя `send_long_message` для текста
-    и корректно обрабатывая клавиатуры.
+    Отправляет нормализованное сообщение от Rasa.
     """
     if "file" in norm and norm["file"]:
         await message.answer_document(norm["file"])
@@ -123,59 +105,39 @@ async def send_normalized_message(message: types.Message, norm: dict):
             markup = reply_markup
 
     if norm["image"]:
-        # Если подпись к картинке слишком длинная, отправляем ее отдельным сообщением
         if norm["text"] and len(norm["text"]) > 1024:
             sent_message = await message.answer_photo(norm["image"])
-            # Сохраняем context если есть
             if "context" in norm:
                 sent_message.context = norm["context"]
-            # Отправляем длинный текст с кнопками уже после фото
             await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
         else:
             sent_message = await message.answer_photo(norm["image"], caption=norm["text"], reply_markup=markup, parse_mode=norm.get("parse_mode"))
-            # Сохраняем context если есть
             if "context" in norm:
                 sent_message.context = norm["context"]
         return
 
     if norm["text"]:
-        # Используем send_long_message для текста и сохраняем context
         if markup:
-            # Если есть клавиатура, отправляем через answer
             sent_message = await message.answer(norm["text"], parse_mode=norm.get("parse_mode"), disable_web_page_preview=True, reply_markup=markup)
         else:
-            # Если нет клавиатуры, используем send_long_message
             await send_long_message(message, norm["text"], parse_mode=norm.get("parse_mode"), reply_markup=markup)
-            # Для send_long_message context нужно сохранять иначе, так как оно отправляет несколько сообщений
-            # В этом случае context будет доступен только для первого сообщения
             return
         
-        # Сохраняем context в отправленное сообщение
         if "context" in norm:
             sent_message.context = norm["context"]
-    # Этот блок сработает, если есть только кнопки без текста
     elif markup:
          sent_message = await message.answer("Выберите вариант:", reply_markup=markup)
          if "context" in norm:
              sent_message.context = norm["context"]
 
 def create_structured_response(api_data: dict, responses: list) -> list:
-    """
-    Принимает полный ответ от API и список сообщений для пользователя.
-    Извлекает 'used_objects' из ответа API и "прикрепляет" их к первому сообщению.
-    Возвращает готовый для отправки список сообщений.
-    """
     if not isinstance(api_data, dict):
         return responses
 
     used_objects = api_data.get("used_objects", [])
-    
-    # Если есть и сообщения для пользователя, и объекты для контекста...
     if responses and used_objects:
-        # ...прикрепляем метаданные к первому сообщению.
         responses[0]['used_objects'] = used_objects
         logging.getLogger(__name__).info(f"К ответу прикреплено used_objects: {len(used_objects)} шт.")
-        
         
     return responses
 
@@ -185,8 +147,17 @@ def escape_markdown(text: str) -> str:
     """
     if not text:
         return ""
-    
-    # Список символов, которые нужно экранировать в MarkdownV2
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
-    
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+
+def convert_llm_markdown_to_html(text: str) -> str:
+    """
+    Преобразует базовую Markdown-разметку LLM (**, ###) в HTML,
+    понятный Telegram, и экранирует спецсимволы.
+    """
+    if not text:
+        return ""
+    text = html.escape(text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'###\s*(.+)', r'<b>\1</b>', text)
+    return text

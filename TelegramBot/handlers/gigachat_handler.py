@@ -13,7 +13,7 @@ from logic.action_handlers.geospatial import (
     handle_draw_locate_map, handle_nearest, handle_objects_in_polygon,
     handle_geo_request, handle_draw_map_of_infrastructure, handle_draw_map_of_list_stub
 )
-from utils.bot_utils import send_long_message, escape_markdown
+from utils.bot_utils import send_long_message, convert_llm_markdown_to_html
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.feedback_manager import FeedbackManager
@@ -58,6 +58,9 @@ class GigaChatHandler:
             ("list_items", "Biological"): handle_objects_in_polygon,
             ("list_items", "Infrastructure"): handle_geo_request,
             ("count_items", "Infrastructure"): handle_geo_request,
+            ("get_help", "ANY"): self._handle_help_request,
+            ("small_talk", "ANY"): self._handle_small_talk_request,
+        
         }
 
         # Маппинг префиксов callback_data на обработчики
@@ -67,6 +70,23 @@ class GigaChatHandler:
             "explore": self._handle_exploration,
             "fallback": self._handle_fallback,
         }
+    
+    async def _handle_help_request(self, original_query: str, **kwargs) -> list:
+        """
+        Обрабатывает запросы типа 'Что ты умеешь?', вызывая генерацию текста через LLM.
+        """
+        # Генерируем ответ с помощью метода в QueryAnalyzer, который содержит системный промпт
+        answer_text = await self.qa.answer_general_question(original_query)
+        
+        # Возвращаем в стандартном формате ответов
+        return [{"type": "text", "content": answer_text}]
+    
+    async def _handle_small_talk_request(self, original_query: str, **kwargs) -> list:
+        """
+        Обрабатывает small_talk (приветствия и оффтоп).
+        """
+        answer = await self.qa.reply_to_small_talk(original_query)
+        return [{"type": "text", "content": answer}]
 
     @staticmethod
     def _clean_text_for_comparison(text: str) -> str:
@@ -175,7 +195,7 @@ class GigaChatHandler:
                 # Шаг 2: Обогащение анализа контекстом
                 final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis, query)
             
-            logger.info(f"[{user_id}] Финальный анализ - action: {final_analysis.get('action')}, entity: {final_analysis.get('primary_entity', {}).get('name')}")
+            logger.info(f"[{user_id}] Финальный анализ - action: {final_analysis.get('action')}, entity: {(final_analysis.get('primary_entity') or {}).get('name')}")
             
             # Debug mode
             debug_mode = get_user_settings(user_id).get("debug_mode", False)
@@ -317,11 +337,13 @@ class GigaChatHandler:
         for resp_data in responses:
             response_type = resp_data.get("type")
             
-            parse_mode = "MarkdownV2"
+            # Используем HTML для корректного отображения жирного текста и заголовков
+            parse_mode = "HTML"
 
             if response_type in ["clarification", "clarification_map"]:
                 keyboard = self._build_keyboard(resp_data.get("buttons"))
-                caption_text = escape_markdown(resp_data.get("content", ""))
+                # Конвертируем Markdown в HTML
+                caption_text = convert_llm_markdown_to_html(resp_data.get("content", ""))
                 
                 if response_type == "clarification_map":
                     await message.answer_photo(
@@ -335,7 +357,8 @@ class GigaChatHandler:
                 break
             
             elif response_type == "text":
-                content_text = escape_markdown(resp_data.get("content", ""))
+                # Конвертируем Markdown в HTML
+                content_text = convert_llm_markdown_to_html(resp_data.get("content", ""))
                 await send_long_message(message, content_text, parse_mode=parse_mode)
                 
             elif response_type == "image":
@@ -345,7 +368,11 @@ class GigaChatHandler:
                 kb = InlineKeyboardMarkup().add(
                     InlineKeyboardButton("Открыть интерактивную карту 🌐", url=resp_data["interactive"])
                 )
-                caption_text = escape_markdown(resp_data.get("caption", ""))
+                
+                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                # Инициализируем caption_text ДО использования
+                raw_caption = resp_data.get("caption", "")
+                caption_text = convert_llm_markdown_to_html(raw_caption)
                 
                 await message.answer_photo(
                     photo=resp_data["static"],
@@ -355,10 +382,10 @@ class GigaChatHandler:
                 )
 
             elif response_type == "debug":
-                # Для debug используем Markdown V1 (там часто JSON блоки)
+                # Для debug используем Markdown (V1), так как там часто JSON блоки
                 content = resp_data.get("content", "")
                 await message.answer(content, parse_mode="Markdown")
-
+                
     @staticmethod
     def _build_keyboard(buttons_data: list) -> InlineKeyboardMarkup | None:
         """Универсальный сборщик инлайн-клавиатур из данных кнопок."""

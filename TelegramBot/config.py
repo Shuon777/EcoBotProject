@@ -47,5 +47,6 @@ STAND_SECRET_KEY = get_env_var("STAND_SECRET_KEY", "stand_test_7xAk92nMq4pL8tR1w
 STAND_SESSION_TIMEOUT = 300
 # --- Таймауты ---
 DEFAULT_TIMEOUT = 25
+TIMEOUT_FOR_OBJECTS_IN_POLYGON = 65
 GIGACHAT_TIMEOUT = 50
 # --- КОНЕЦ ФАЙЛА TelegramBot/config.py ---
