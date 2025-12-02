@@ -260,7 +260,7 @@ async def handle_get_description(
                 canonical_name = data.get("matches", [object_nom])[0]
                 user_settings = get_user_settings(user_id)
                 stoplist_enabled = user_settings.get("stoplist_enabled", True)
-                stoplist_param = 2 if stoplist_enabled else 1
+                stoplist_param = 1 if stoplist_enabled else 2
             
                 desc_url = (f"{API_URLS['get_description']}?species_name={canonical_name}"
                             f"&debug_mode={str(debug_mode).lower()}"

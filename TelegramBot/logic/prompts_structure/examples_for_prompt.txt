@@ -18,6 +18,16 @@
   "attributes": {}
 }
 
+Запрос: "Покажи коноплю возле Листвянки"
+Результат:
+{
+  "_reasoning": "Запрос картографического показа ('Покажи'). Объект 'конопля' (Flora), локация 'Листвянка' (GeoPlace).",
+  "action": "find_nearby",
+  "primary_entity": { "name": "конопля", "type": "Biological", "category": "Flora", "subcategory": [] },
+  "secondary_entity": { "name": "Листвянка", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
+
 Запрос: "Найди иву возле Бодайбо"
 Результат:
 {

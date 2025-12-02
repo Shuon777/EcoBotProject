@@ -27,7 +27,7 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     rasa_button_text = "✅ Режим: Rasa" if current_mode == "rasa" else "Режим: Rasa"
     gigachat_button_text = "✅ Режим: GigaChat" if current_mode == "gigachat" else "Режим: GigaChat"
     fallback_status = "✅ Вкл" if fallback_enabled else "❌ Выкл"
-    stoplist_status = "❌ Выкл" if stoplist_enabled else "✅ Вкл"
+    stoplist_status = "✅ Вкл" if stoplist_enabled else "❌ Выкл"
     debug_status = "✅ Вкл" if debug_mode_enabled else "❌ Выкл"
 
     keyboard = InlineKeyboardMarkup(row_width=2)

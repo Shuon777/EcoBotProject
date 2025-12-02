@@ -16,8 +16,8 @@ from logic.stand_manager import is_stand_session_active
 
 logger = logging.getLogger(__name__)
 
-async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, analysis: dict, debug_mode: bool, geo_name: str = None) -> list:
-    full_url = f"{url}?debug_mode={str(debug_mode).lower()}"
+async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, analysis: dict, debug_mode: bool, stoplist_param: int, geo_name: str = None) -> list:
+    full_url = f"{url}?debug_mode={str(debug_mode).lower()}&in_stoplist={stoplist_param}"
     
     responses = []
     if debug_mode:
@@ -61,7 +61,7 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
         responses.extend(create_structured_response(api_data, user_messages))
         return responses
 
-async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str) -> list:
     object_nom = analysis.get("primary_entity", {}).get("name")
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     if not object_nom or not geo_nom:
@@ -74,6 +74,10 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
                 return [{"type": "text", "content": f"Не удалось найти координаты для '{geo_nom}'."}]
             coords = await resp.json()
         logger.info(f"Ответ от get_coords - {coords}")
+
+        user_settings = get_user_settings(user_id)
+        stoplist_enabled = user_settings.get("stoplist_enabled", True)
+        stoplist_param = 1 if stoplist_enabled else 2
 
         payload = {
             "latitude": coords.get("latitude"), 
@@ -89,18 +93,23 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
             payload=payload,
             analysis=analysis, 
             debug_mode=debug_mode,
-            geo_name=geo_nom
+            geo_name=geo_nom,
+            stoplist_param=stoplist_param
         )
 
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске ближайших мест."}]
 
-async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str) -> list:
     object_nom = analysis.get("primary_entity", {}).get("name")
     if not object_nom: 
         return [{"type": "text", "content": "Не указан объект для отображения на карте."}]
     
+    user_settings = get_user_settings(user_id)
+    stoplist_enabled = user_settings.get("stoplist_enabled", True)
+    stoplist_param = 1 if stoplist_enabled else 2
+
     payload = {
         "latitude": 53.27612, 
         "longitude": 107.3274, 
@@ -108,13 +117,14 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
         "species_name": object_nom, 
         "object_type": "geographical_entity"
     }
-    
+
     return await _get_map_from_api(
         session=session,
         url=API_URLS["coords_to_map"],
         payload=payload,
         analysis=analysis, 
-        debug_mode=debug_mode
+        debug_mode=debug_mode,
+        stoplist_param=stoplist_param
     )
 
 async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
