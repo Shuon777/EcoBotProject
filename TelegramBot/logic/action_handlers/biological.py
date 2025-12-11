@@ -62,7 +62,7 @@ async def handle_get_picture(
     analysis: dict, 
     user_id: str, 
     original_query: str,
-    debug_mode: bool,
+    debug_mode: bool = False,
     message: Optional[types.Message] = None
 ) -> list:
     primary_entity = analysis.get("primary_entity", {})
@@ -125,6 +125,16 @@ async def handle_get_picture(
                     test_features = features.copy(); test_features.pop("habitat")
                     if await check_simplified_search(session, object_nom, test_features, debug_mode):
                         fallback_options.append({"text": "🌲 Без места", "callback_data": f"fallback:no_habitat:{object_nom}"})
+
+                if "fruits_present" in attributes:
+                    test_features = features.copy(); test_features.pop("fruits_present")
+                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
+                        fallback_options.append({"text": "🌰 Без плода", "callback_data": f"fallback:no_fruits:{object_nom}"})
+
+                if "flowering" in attributes:
+                    test_features = features.copy(); test_features.pop("flowering")
+                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
+                        fallback_options.append({"text": "🌰 Не цветущий", "callback_data": f"fallback:no_flowering:{object_nom}"})
 
                 if await check_simplified_search(session, object_nom, {}, debug_mode):
                     fallback_options.append({"text": "🖼️ Только объект", "callback_data": f"fallback:basic:{object_nom}"})

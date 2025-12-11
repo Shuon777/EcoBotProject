@@ -590,8 +590,10 @@ class GigaChatHandler:
             simplified_attributes.pop("season", None)
         elif fallback_type == "no_habitat":
             simplified_attributes.pop("habitat", None)
-        elif fallback_type == "basic":
-            simplified_attributes = {}
+        elif fallback_type == "no_fruits":
+            simplified_attributes.pop("fruits_present", None)
+        elif fallback_type == "no_flowering":
+            simplified_attributes.pop("flowering", None)
 
         simplified_analysis = {
             "action": "show_image",
