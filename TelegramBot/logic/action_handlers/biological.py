@@ -345,6 +345,11 @@ async def handle_get_description(
                             except: pass
 
             logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено.")
+            error_text = f"Not found for '{object_nom}'"
+            await log_api_error(
+                    session, user_id, find_url, find_resp.status, error_text, original_query,
+                    context=analysis, source="biological.find_species_with_description"
+                )
             if get_user_fallback_setting(user_id):
                 fallback_answer = await call_gigachat_fallback_service(session, original_query)
                 if fallback_answer: 
