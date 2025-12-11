@@ -108,6 +108,16 @@
   "attributes": { "fruits_present": "Шишка" }
 }
 
+Запрос: "Покажи цветущий черепоплодник"
+Результат:
+{
+  "_reasoning": "Запрос картинки ('Покажи'). Объект 'черепоплодник' (Biological/Flora), признак 'цветущий'.",
+  "action": "show_image",
+  "primary_entity": { "name": "черепоплодник", "type": "Biological", "category": "Flora" },
+  "secondary_entity": null,
+  "attributes": { "flowering": "Да" }
+}
+
 Запрос: "А осенью?"
 Результат:
 {

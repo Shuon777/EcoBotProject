@@ -68,7 +68,7 @@ def determine_baikal_relation(query: str, entity_name: str = "", entity_type: st
     if has_near:
         return "рядом/около Байкала"
     elif has_on:
-        return "в/на Байкале"
+        return ["рядом/около Байкала", "в/на Байкале"]
     elif is_water_object:
         return "в/на Байкале"
     elif is_shore_object:

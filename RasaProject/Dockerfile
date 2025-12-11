@@ -1,16 +1,22 @@
-# Правильная версия
-FROM python:3.9
+FROM rasa/rasa:3.6.4-full
+
+USER root
+
 WORKDIR /app
 
-# Копируем только то, что нужно для зависимостей
-COPY requirements.txt .
-RUN --network=host pip install rasa[transformers]
-
-# Копируем остальной код
 COPY . .
 
-# УБИРАЕМ "RUN rasa train" ОТСЮДА!
+# Скачиваем модели ПРИ СБОРКЕ (используем TF-версии для совместимости с Rasa)
+
+RUN pip install -r requirements.txt
+RUN python -m spacy download ru_core_news_md
+
+# Создаем кэш-директории с правильными правами
+RUN mkdir -p /app/.rasa/cache && \
+    mkdir -p /app/.cache/huggingface && \
+    chown -R 1001:1001 /app
 
 USER 1001
-# Запускаем без флага --debug и указываем путь к модели
+
+ENTRYPOINT ["rasa"]
 CMD ["run", "--enable-api", "--cors", "*", "--model", "/app/models"]

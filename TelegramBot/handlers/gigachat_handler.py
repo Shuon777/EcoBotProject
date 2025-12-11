@@ -17,6 +17,7 @@ from utils.bot_utils import send_long_message, convert_llm_markdown_to_html
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.feedback_manager import FeedbackManager
+from utils.error_logger import send_error_log
 from config import API_URLS
 
 unhandled_logger = logging.getLogger("unhandled")
@@ -285,6 +286,19 @@ class GigaChatHandler:
             
         except Exception as e:
             logger.error(f"[{user_id}] КРИТИЧЕСКАЯ ОШИБКА в process_message: {e}", exc_info=True)
+            try:
+                # Пытаемся получить контекст (историю), чтобы приложить к логу
+                latest_history = await self.dialogue_manager.get_latest_history(user_id)
+                await send_error_log(
+                    session=self.session,
+                    user_query=query,
+                    user_id=user_id,
+                    error=e,
+                    context=latest_history or {},
+                    additional_info={"source": "gigachat_handler.process_message"}
+                )
+            except Exception as log_ex:
+                logger.error(f"Ошибка при попытке отправить лог ошибки: {log_ex}")
             await message.answer("Ой, что-то пошло не так на моей стороне.")
         finally:
             await feedback.cleanup()
@@ -329,6 +343,18 @@ class GigaChatHandler:
 
         except Exception as e:
             logger.error(f"[{user_id}] Ошибка в process_callback для data='{data}': {e}", exc_info=True)
+            try:
+                latest_history = await self.dialogue_manager.get_latest_history(user_id)
+                await send_error_log(
+                    session=self.session,
+                    user_query=data,
+                    user_id=user_id,
+                    error=e,
+                    context=latest_history or {},
+                    additional_info={"source": "gigachat_handler.process_callback"}
+                )
+            except Exception:
+                pass
             await callback_query.message.answer("Произошла ошибка при обработке вашего выбора.")
             await callback_query.answer()
 

@@ -22,13 +22,13 @@ USER_SETTINGS_PATH=get_env_var("USER_SETTINGS_PATH")
 USER_LOCK_SETTINGS_PATH=get_env_var("USER_LOCK_SETTINGS_PATH")
 
 # --- Rasa ---
-RASA_WEBHOOK_URL = get_env_var("RASA_WEBHOOK_URL", "http://localhost:5005/webhooks/rest/webhook")
+RASA_WEBHOOK_URL = get_env_var("RASA_WEBHOOK_URL")
 
 # --- GigaChat Fallback API ---
-GIGACHAT_FALLBACK_URL = get_env_var("GIGACHAT_FALLBACK_URL", "http://127.0.0.1:5556/ask_simple")
+GIGACHAT_FALLBACK_URL = get_env_var("GIGACHAT_FALLBACK_URL")
 
 # --- Backend EcoBot API (testecobot.ru) ---
-ECOBOT_API_BASE_URL = get_env_var("ECOBOT_API_BASE_URL", "https://testecobot.ru")
+ECOBOT_API_BASE_URL = get_env_var("ECOBOT_API_BASE_URL")
 
 API_URLS = {
     "get_description": f"{ECOBOT_API_BASE_URL}/api/species/description/",
@@ -40,13 +40,14 @@ API_URLS = {
     "find_species_with_description": f"{ECOBOT_API_BASE_URL}/api/find_species_with_description",
     "find_geo_special_description": f"{ECOBOT_API_BASE_URL}/object/description/",
     "show_map_infrastructure": f"{ECOBOT_API_BASE_URL}/objects_in_area_by_type",
-    "stand_endpoint": "http://iigor.ru/scripts/sights_ii.jsp"
+    "stand_endpoint": "http://iigor.ru/scripts/sights_ii.jsp",
+    "log_error": f"{ECOBOT_API_BASE_URL}/log_error"
 }
 
-STAND_SECRET_KEY = get_env_var("STAND_SECRET_KEY", "stand_test_7xAk92nMq4pL8tR1wY3z")
+STAND_SECRET_KEY = get_env_var("STAND_SECRET_KEY")
 STAND_SESSION_TIMEOUT = 300
 # --- Таймауты ---
 DEFAULT_TIMEOUT = 25
 TIMEOUT_FOR_OBJECTS_IN_POLYGON = 65
 GIGACHAT_TIMEOUT = 50
-# --- КОНЕЦ ФАЙЛА TelegramBot/config.py ---
+CONTEXT_TTL_SECONDS = 900 

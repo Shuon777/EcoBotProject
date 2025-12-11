@@ -16,7 +16,6 @@ STAND_LOCK_KEY = "stand_lock:active_user"
 active_stand_tasks = {}
 
 async def _send_reset_to_stand(session: aiohttp.ClientSession):
-    # ... (эта функция остается без изменений)
     try:
         url = API_URLS['stand_endpoint']
         payload = {"items": [], "secret_key": STAND_SECRET_KEY}

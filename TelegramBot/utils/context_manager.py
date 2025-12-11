@@ -1,13 +1,12 @@
-# --- НАЧАЛО ФАЙЛА: utils/context_manager.py ---
-
-import redis.asyncio as redis # [# ИЗМЕНЕНО] Импортируем асинхронную версию
+import redis.asyncio as redis 
 import json
 import logging
 from typing import Dict, Any
+from config import CONTEXT_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_TTL_SECONDS = 900 
+
 
 class RedisContextManager:
     def __init__(self, host='localhost', port=6379):
@@ -62,4 +61,3 @@ class RedisContextManager:
         except Exception as e:
             logger.error(f"Ошибка при удалении контекста для user_id {user_id}: {e}")
             
-# --- КОНЕЦ ФАЙЛА: utils/context_manager.py ---

@@ -1,23 +1,19 @@
-# Файл: /var/www/EcoBotProject/RasaProject/Dockerfile.actions
-
 FROM rasa/rasa:3.6.4-full
+
 WORKDIR /app
 
-# Переключаемся на пользователя root, чтобы установить системные пакеты и пакеты pip
-USER root
-
-# Устанавливаем g++ и другие утилиты для сборки (оставляем на всякий случай)
-RUN apt-get update && apt-get install -y build-essential
-
+# Копируем только то, что нужно для сервера действий
 COPY actions/ /app/actions/
 COPY logic/ /app/logic/
 COPY data/ /app/data/
 COPY actions-requirements.txt .
 
-# Запускаем pip install от имени root
-RUN --network=host pip install -r actions-requirements.txt
+# Устанавливаем зависимости от имени root, У КОТОРОГО ЕСТЬ ПРАВА.
+USER root
+RUN pip install -r actions-requirements.txt
 
-# ВАЖНО: Возвращаемся к стандартному пользователю для запуска самого сервера
+# Возвращаемся к стандартному пользователю для запуска.
 USER 1001
 
+# Команда запуска остается прежней.
 CMD ["run", "actions"]

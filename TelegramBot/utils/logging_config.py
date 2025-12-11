@@ -3,8 +3,8 @@ from logging.handlers import TimedRotatingFileHandler
 import sys
 import os
 
-LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", "/var/log/ecobot/bot.log")
-UNHANDLED_QUERIES_LOG_PATH = os.getenv("UNHANDLED_QUERIES_LOG_PATH", "/var/log/ecobot/unhandled_queries.log")
+LOG_FILE_PATH = os.getenv("LOG_FILE_PATH")
+UNHANDLED_QUERIES_LOG_PATH = os.getenv("UNHANDLED_QUERIES_LOG_PATH")
 
 
 def setup_logging():

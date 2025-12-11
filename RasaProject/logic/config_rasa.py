@@ -35,7 +35,8 @@ API_URLS = {
 }
 
 # --- Путь к файлу настроек ---
-USER_SETTINGS_PATH = get_env_var("USER_SETTINGS_PATH")
+USER_SETTINGS_PATH=get_env_var("USER_SETTINGS_PATH")
+USER_LOCK_SETTINGS_PATH=get_env_var("USER_LOCK_SETTINGS_PATH")
 
 # --- Таймауты ---
 DEFAULT_TIMEOUT = 25

@@ -1,8 +1,7 @@
-# --- НАЧАЛО ФАЙЛА TelegramBot/utils/bot_utils.py ---
 from aiogram import types
 import re
 import logging
-import html  # <--- ДОБАВЛЕНО
+import html  
 
 logger = logging.getLogger(__name__)
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096

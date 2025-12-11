@@ -8,6 +8,7 @@ from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.bot_utils import create_structured_response
 from utils.feedback_manager import FeedbackManager
+from utils.error_logger import send_error_log
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ async def handle_get_picture(
     session: aiohttp.ClientSession, 
     analysis: dict, 
     user_id: str, 
+    original_query: str,
     debug_mode: bool,
     message: Optional[types.Message] = None
 ) -> list:
@@ -85,6 +87,7 @@ async def handle_get_picture(
         if attributes.get("season"): features["season"] = attributes["season"]
         if attributes.get("habitat"): features["habitat"] = attributes["habitat"]
         if attributes.get("fruits_present"): features["fruits_present"] = attributes["fruits_present"]
+        if attributes.get("flowering"): features["flowering"] = attributes["flowering"]
 
         url = f"{API_URLS['search_images']}?debug_mode={str(debug_mode).lower()}"
         payload = {"species_name": object_nom, "features": features}
@@ -149,9 +152,9 @@ async def handle_get_picture(
             user_messages = [{"type": "image", "content": img["image_path"]} for img in images[:5] if isinstance(img, dict) and "image_path" in img]
             
             if not user_messages:
-                 logger.warning(f"[{user_id}] Изображения не найдены для '{object_nom}'")
-                 responses.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."})
-                 return responses
+                logger.warning(f"[{user_id}] Изображения не найдены для '{object_nom}'")
+                responses.append({"type": "text", "content": f"Извините, не удалось загрузить ни одного изображения для «{object_nom}»."})
+                return responses
             
             logger.info(f"[{user_id}] Найдено {len(user_messages)} изображений для '{object_nom}'")
             responses.extend(create_structured_response(api_data, user_messages))
@@ -159,6 +162,14 @@ async def handle_get_picture(
 
     except Exception as e:
         logger.error(f"Непредвиденная ошибка в handle_get_picture: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id=user_id,
+            error=e,
+            context=analysis,
+            additional_info={"source": "biological.handle_get_picture"}
+        )
         responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске изображений."})
         return responses
     finally:
@@ -317,6 +328,14 @@ async def handle_get_description(
 
     except Exception as e:
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id=user_id,
+            error=e,
+            context=analysis,
+            additional_info={"source": "biological.handle_get_description"}
+        )
         responses.append({"type": "text", "content": "Проблема с подключением к серверу описаний."})
         return responses
     finally:

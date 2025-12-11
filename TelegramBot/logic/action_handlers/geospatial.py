@@ -9,6 +9,7 @@ from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, TIMEOUT_FOR_OBJE
 from utils.settings_manager import get_user_settings, update_user_settings
 from utils.bot_utils import create_structured_response
 from utils.feedback_manager import FeedbackManager
+from utils.error_logger import send_error_log
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
 from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
@@ -61,7 +62,7 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
         responses.extend(create_structured_response(api_data, user_messages))
         return responses
 
-async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str) -> list:
+async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str, original_query: str,) -> list:
     object_nom = analysis.get("primary_entity", {}).get("name")
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     if not object_nom or not geo_nom:
@@ -96,12 +97,19 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
             geo_name=geo_nom,
             stoplist_param=stoplist_param
         )
-
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id=user_id,
+            error=e,
+            context=analysis,
+            additional_info={"source": "geospatial.handle_nearest"}
+        )
         return [{"type": "text", "content": "Произошла внутренняя ошибка при поиске ближайших мест."}]
 
-async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str) -> list:
+async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, user_id: str, original_query: str) -> list:
     object_nom = analysis.get("primary_entity", {}).get("name")
     if not object_nom: 
         return [{"type": "text", "content": "Не указан объект для отображения на карте."}]
@@ -127,7 +135,7 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
         stoplist_param=stoplist_param
     )
 
-async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool) -> list:
+async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool, original_query: str) -> list:
     """
     Обрабатывает запросы на отображение инфраструктуры на карте.
     """
@@ -236,17 +244,24 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
 
             responses.extend(create_structured_response(api_data, user_messages))
             return responses
-
     except asyncio.TimeoutError:
         logger.error(f"Таймаут при запросе к API инфраструктуры")
         responses.append({"type": "text", "content": "Сервер инфраструктуры не отвечает. Попробуйте позже."})
         return responses
     except Exception as e:
         logger.error(f"Критическая ошибка в handle_draw_map_of_infrastructure: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id=user_id,
+            error=e,
+            context=analysis,
+            additional_info={"source": "geospatial.handle_draw_map_of_infrastructure"}
+        )
         responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске объектов на карте."})
         return responses
 
-async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool) -> list:
+async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: dict, debug_mode: bool, original_query: str) -> list:
     geo_nom = analysis.get("secondary_entity", {}).get("name")
     subtype = analysis.get("primary_entity", {}).get("category")
     subtype_mapping = {
@@ -323,10 +338,17 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
                 user_messages.append(clarification_message)
 
             responses.extend(create_structured_response(api_data, user_messages))
-            return responses
-
+            return responses 
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_objects_in_polygon`: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id="Unknown", # В сигнатуре этой функции нет user_id, если он нужен - надо прокидывать
+            error=e,
+            context=analysis,
+            additional_info={"source": "geospatial.handle_objects_in_polygon"}
+        )
         responses.append({"type": "text", "content": f"Произошла внутренняя ошибка при поиске объектов в «{geo_nom}»."})
         return responses
 
@@ -469,7 +491,6 @@ async def handle_geo_request(
             else:
                 logger.info(f"[{user_id}] В ответе API find_geo_special_description не найдено 'external_id' в meta_info. Дополнительный запрос не выполняется.")
 
-
         # [ИЗМЕНЕНИЕ] Шаг 3: Обрабатываем ответ и готовим сообщения для пользователя
         user_messages = []
 
@@ -508,9 +529,16 @@ async def handle_geo_request(
         # [ИЗМЕНЕНИЕ] Шаг 4: Вызываем помощника для упаковки метаданных
         responses.extend(create_structured_response(api_data, user_messages))
         return responses
-
     except Exception as e:
         logger.error(f"Критическая ошибка в `handle_geo_request`: {e}", exc_info=True)
+        await send_error_log(
+            session=session,
+            user_query=original_query,
+            user_id=user_id,
+            error=e,
+            context=analysis,
+            additional_info={"source": "geospatial.handle_geo_request"}
+        )
         responses.append({"type": "text", "content": "Произошла внутренняя ошибка при поиске информации."})
         return responses
     finally:
