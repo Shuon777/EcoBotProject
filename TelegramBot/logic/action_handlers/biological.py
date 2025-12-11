@@ -8,7 +8,7 @@ from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.bot_utils import create_structured_response
 from utils.feedback_manager import FeedbackManager
-from utils.error_logger import send_error_log
+from utils.error_logger import send_error_log, log_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +102,16 @@ async def handle_get_picture(
             responses.append({"type": "debug", "content": debug_info})
 
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
+            if not resp.ok:
+                resp_text = await resp.text()
+                await log_api_error(
+                    session, user_id, url, resp.status, resp_text, original_query,
+                    context=analysis, source="biological.handle_get_picture"
+                )
             api_data = await resp.json()
 
             if not resp.ok or not api_data.get("images"):
-                logger.warning(f"[{user_id}] Изображения для '{object_nom}' с признаками {features} не найдены. Запуск логики fallback.")
+                logger.info(f"[{user_id}] Изображения для '{object_nom}' с признаками {features} не найдены. Запуск логики fallback.")
                 
                 if not attributes:
                     responses.append({"type": "text", "content": f"Извините, я не нашел изображений для «{object_nom}»."})
@@ -235,7 +241,12 @@ async def handle_get_description(
 
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
             if not find_resp.ok:
-                logger.error(f"[{user_id}] API `find_species` вернул ошибку {find_resp.status} для '{object_nom}'")
+                error_text = find_resp.text()
+                logger.info(f"[{user_id}] API `find_species` вернул ошибку {find_resp.status} для '{object_nom}'")
+                await log_api_error(
+                    session, user_id, find_url, find_resp.status, error_text, original_query,
+                    context=analysis, source="biological.find_species_with_description"
+                )
                 responses.append({"type": "text", "content": f"Извините, произошла ошибка при поиске «{object_nom}»."})
                 return responses
             
@@ -318,16 +329,23 @@ async def handle_get_description(
                         
                         responses.extend(create_structured_response(api_data, user_messages))
                         return responses
+                    
+                    else:
+                        error_text = await desc_resp.text()
+                        await log_api_error(
+                            session, user_id, desc_url, desc_resp.status, error_text, original_query,
+                            context={"canonical_name": canonical_name}, source="biological.get_description"
+                        )
 
-                    elif desc_resp.status == 400:
-                        desc_data = await desc_resp.json()
-                        responses.append({"type": "text", "content": desc_data.get("error", "Я не смог найти ответ")})
-                        return responses
+                        if desc_resp.status == 400:
+                            try:
+                                desc_data = await desc_resp.json()
+                                responses.append({"type": "text", "content": desc_data.get("error", "Я не смог найти ответ")})
+                                return responses
+                            except: pass
 
-            logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено ни на одном из этапов.")
-            
+            logger.warning(f"[{user_id}] Описание для '{object_nom}' не найдено.")
             if get_user_fallback_setting(user_id):
-                logger.info(f"[{user_id}] Запускаем GigaChat fallback для запроса: '{original_query}'")
                 fallback_answer = await call_gigachat_fallback_service(session, original_query)
                 if fallback_answer: 
                     responses.append({"type": "text", "content": f"**Ответ от GigaChat:**\n\n{fallback_answer}", "parse_mode": "Markdown"})
@@ -339,12 +357,8 @@ async def handle_get_description(
     except Exception as e:
         logger.error(f"[{user_id}] Критическая ошибка в `handle_get_description`: {e}", exc_info=True)
         await send_error_log(
-            session=session,
-            user_query=original_query,
-            user_id=user_id,
-            error=e,
-            context=analysis,
-            additional_info={"source": "biological.handle_get_description"}
+            session=session, user_query=original_query, user_id=user_id, error=e,
+            context=analysis, additional_info={"source": "biological.handle_get_description"}
         )
         responses.append({"type": "text", "content": "Проблема с подключением к серверу описаний."})
         return responses

@@ -9,7 +9,7 @@ from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, TIMEOUT_FOR_OBJE
 from utils.settings_manager import get_user_settings, update_user_settings
 from utils.bot_utils import create_structured_response
 from utils.feedback_manager import FeedbackManager
-from utils.error_logger import send_error_log
+from utils.error_logger import send_error_log, log_api_error
 from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
 from logic.entity_normalizer import normalize_entity_name, GROUP_ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
@@ -17,7 +17,7 @@ from logic.stand_manager import is_stand_session_active
 
 logger = logging.getLogger(__name__)
 
-async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, analysis: dict, debug_mode: bool, stoplist_param: int, geo_name: str = None) -> list:
+async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: dict, analysis: dict, debug_mode: bool, stoplist_param: int, user_id: str, geo_name: str = None) -> list:
     full_url = f"{url}?debug_mode={str(debug_mode).lower()}&in_stoplist={stoplist_param}"
     
     responses = []
@@ -30,7 +30,12 @@ async def _get_map_from_api(session: aiohttp.ClientSession, url: str, payload: d
         responses.append({"type": "debug", "content": debug_info})
 
     async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
-        if not map_resp.ok: 
+        if not map_resp.ok:
+            error_text = await map_resp.text()
+            await log_api_error(
+                session, user_id, full_url, map_resp.status, error_text, str(payload),
+                context=analysis, source="geospatial._get_map_from_api"
+            )
             responses.append({"type": "text", "content": "Не удалось построить карту."})
             return responses
 
@@ -95,7 +100,8 @@ async def handle_nearest(session: aiohttp.ClientSession, analysis: dict, debug_m
             analysis=analysis, 
             debug_mode=debug_mode,
             geo_name=geo_nom,
-            stoplist_param=stoplist_param
+            stoplist_param=stoplist_param,
+            user_id=user_id
         )
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
@@ -132,7 +138,8 @@ async def handle_draw_locate_map(session: aiohttp.ClientSession, analysis: dict,
         payload=payload,
         analysis=analysis, 
         debug_mode=debug_mode,
-        stoplist_param=stoplist_param
+        stoplist_param=stoplist_param,
+        user_id=user_id
     )
 
 async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, analysis: dict, user_id: str, debug_mode: bool, original_query: str) -> list:
@@ -181,13 +188,28 @@ async def handle_draw_map_of_infrastructure(session: aiohttp.ClientSession, anal
             content_type = resp.headers.get('Content-Type', '').lower()
             
             if 'application/json' not in content_type:
-                logger.error(f"API инфраструктуры вернул не JSON. Status: {resp.status}, Content-Type: {content_type}")
+                # --- [LOGGING ADDITION] ---
+                error_text = await resp.text()
+                await log_api_error(
+                    session, user_id, url, resp.status, f"Invalid Content-Type: {content_type}. Body: {error_text}", 
+                    original_query, context=analysis, source="geospatial.infrastructure"
+                )
+                
                 if resp.status == 404: responses.append({"type": "text", "content": f"Сервис поиска временно недоступен."})
-                elif resp.status == 500: responses.append({"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."})
-                else: responses.append({"type": "text", "content": "Сервер инфраструктуры вернул некорректный ответ."})
+                else: responses.append({"type": "text", "content": "Внутренняя ошибка сервера инфраструктуры."})
                 return responses
 
             api_data = await resp.json()
+
+            if not resp.ok:
+                # --- [LOGGING ADDITION] ---
+                error_msg = api_data.get('error', f'Ошибка {resp.status}')
+                await log_api_error(
+                    session, user_id, url, resp.status, error_msg, original_query, 
+                    context=analysis, source="geospatial.infrastructure"
+                )
+                responses.append({"type": "text", "content": f"Не удалось найти информацию: {error_msg}"})
+                return responses
 
             if is_stand_session_active(user_id):
                 logger.info(f"[{user_id}] Пользователь со стенда. Запускаем дополнительную логику.")
@@ -292,7 +314,12 @@ async def handle_objects_in_polygon(session: aiohttp.ClientSession, analysis: di
     try:
         async with session.post(url, json=payload, timeout=TIMEOUT_FOR_OBJECTS_IN_POLYGON) as resp:
             if not resp.ok:
-                logger.error(f"API `objects_in_polygon` вернул ошибку {resp.status} для '{geo_nom}'")
+                error_text = await resp.text()
+                await log_api_error(
+                    session, "unknown_user", url, resp.status, error_text, original_query, 
+                    context=analysis, source="geospatial.objects_in_polygon"
+                )
+                logger.info(f"API `objects_in_polygon` вернул ошибку {resp.status} для '{geo_nom}'")
                 responses.append({"type": "text", "content": f"Не удалось найти информацию для '{geo_nom}'."})
                 return responses
 
@@ -457,8 +484,14 @@ async def handle_geo_request(
                     break
                 else:
                     if resp.status in [400, 404] and i < len(queries_to_try) - 1:
-                        logger.warning(f"Запрос с '{query_text}' вернул ошибку {resp.status}. Пробуем очищенный запрос...")
+                        logger.info(f"Запрос с '{query_text}' вернул ошибку {resp.status}. Пробуем очищенный запрос...")
                         continue
+
+                    error_text = await resp.text()
+                    await log_api_error(
+                        session, user_id, url, resp.status, error_text, query_text, 
+                        context=analysis, source="geospatial.find_geo_special_description"
+                    )
                     
                     logger.warning(f"Запрос к /object/description прошел с ошибкой - {resp.status}")
                     responses.append({"type": "text", "content": "Извините, информация по этому запросу временно недоступна."})
