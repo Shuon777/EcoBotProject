@@ -451,8 +451,8 @@ async def handle_geo_request(
                 location_info["region"] = ""
             
             geo_type_payload = {
-                "primary_type": [entity_category],
-                "specific_types": entity_subcategory
+                "primary_type": [entity_category] if entity_category else [],
+                "specific_types": entity_subcategory if entity_subcategory else []
             }
                 
             payload = {

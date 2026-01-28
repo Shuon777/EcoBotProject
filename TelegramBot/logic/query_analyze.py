@@ -81,7 +81,7 @@ class QueryAnalyzer:
                 verify_ssl_certs=False,
                 profanity_check=False,
                 timeout=120,
-                scope="GIGACHAT_API_CORP"
+                scope="GIGACHAT_API_PERS"
             )
         except Exception as e:
             logger.error(f"Ошибка создания GigaChat инстанса: {str(e)}")
