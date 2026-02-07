@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import ValidationError
@@ -45,7 +46,7 @@ class QueryAnalyzer:
     def __init__(self):
         """Инициализация обработчика запроса пользователя"""
         try:
-            self.llm = self._init_gigachat()
+            self.llm = self._init_ollama()
             
             # Добавим отладку структуры директорий
             current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +68,17 @@ class QueryAnalyzer:
         except Exception as e:
             logger.error(f"Ошибка инициализации GigaChat: {str(e)}")
             raise
+    
+    def _init_ollama(self):
+        """Подключение к локальной модели через туннель"""
+        logger.info("🤖 Инициализация LOCAL OLLAMA (Qwen)")
+        return ChatOpenAI(
+            # localhost здесь — это сервер VPS, куда приходит конец туннеля
+            base_url="http://localhost:11434/v1",
+            api_key="ollama", # Заглушка
+            model="qwen2.5:7b", # Убедись, что название совпадает с тем, что в ollama list
+            temperature=0.1
+        )
 
     def _init_gigachat(self) -> GigaChat:
         """Инициализация GigaChat с API-ключом"""
@@ -137,37 +149,22 @@ class QueryAnalyzer:
         text_lower = text.lower()
         return any(phrase in text_lower for phrase in blocked_phrases)
 
+
     def _extract_json_safe(self, text: str) -> Optional[str]:
-        """
-        Безопасно извлекает JSON из ответа LLM, очищая от Markdown и
-        исправляя проблему двойных скобок {{...}}.
-        """
-        if not text:
-            return None
-
+        if not text: return None
         text = text.strip()
-
-        # 1. Ищем границы JSON объекта: от первого '{' до последнего '}'
-        # Это автоматически отсекает Markdown-обертку (```json ... ```) и лишний текст.
-        start_idx = text.find('{')
-        end_idx = text.rfind('}')
-
-        if start_idx == -1 or end_idx == -1:
-            # Если скобок нет вообще
-            return None
-
-        # Вырезаем предполагаемый JSON
-        json_candidate = text[start_idx:end_idx + 1]
-
-        # 2. ХАК: Исправление двойных скобок {{...}}
-        # Валидный JSON-объект обычно начинается как { "key"...
-        # Если строка начинается строго с {{, значит модель ошиблась и добавила лишний слой.
-        if len(json_candidate) >= 2:
-            if json_candidate.startswith("{{") and json_candidate.endswith("}}"):
-                # Убираем по одному символу с краев
-                json_candidate = json_candidate[1:-1]
-
-        return json_candidate
+        # Qwen часто пишет: "Here is the JSON: ```json ... ```"
+        # Находим первую { и последнюю }
+        start, end = text.find('{'), text.rfind('}')
+        if start == -1 or end == -1: return None
+        
+        json_str = text[start:end+1]
+        
+        # Исправление сдвоенных скобок (бывает у Qwen)
+        if json_str.startswith("{{") and json_str.endswith("}}"): 
+            json_str = json_str[1:-1]
+            
+        return json_str
 
     async def _make_llm_request(self, query: str, history_block: str) -> Optional[Dict[str, Any]]:
         """
@@ -210,7 +207,10 @@ class QueryAnalyzer:
                 validated_model = AnalysisResponse(**parsed_json)
                 
                 # Если всё ок, превращаем обратно в dict (exclude_none=False важно, чтобы null поля остались null)
-                result_dict = validated_model.model_dump(by_alias=True)
+                result_dict = validated_model.model_dump(by_alias=True)\
+                
+                if not result_dict.get("search_query"):
+                    result_dict["search_query"] = query
                 
                 logger.info(f"✅ Успешная валидация (Попытка {attempt}). Action: {result_dict.get('action')}")
                 return result_dict

@@ -78,7 +78,7 @@ class Entity(BaseModel):
 
 class AnalysisResponse(BaseModel):
     reasoning: Optional[str] = Field(None, alias="_reasoning")
-    search_query: str = Field(description="Очищенный поисковый запрос без вводных слов")
+    search_query: Optional[str] = Field(None, description="Очищенный поисковый запрос")
     action: str
     primary_entity: Optional[Entity] = None
     secondary_entity: Optional[Entity] = None
