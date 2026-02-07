@@ -16,6 +16,7 @@ from utils.logging_config import setup_logging
 from logic.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from utils.context_manager import RedisContextManager
+from utils.heartbeat import BotHeartbeat
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -48,6 +49,19 @@ async def on_startup(dispatcher):
             gigachat_h.process_callback, 
             lambda c: not c.data.startswith('/') and c.data not in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback"]
         )
+
+        hb = BotHeartbeat(host='localhost', port=6379, db=2)
+        async def heartbeat_task():
+            logger.info("Цикл heartbeat запущен.") # Добавь лог для проверки
+            while True:
+                try:
+                    await hb.ping()
+                    # logger.debug("Heartbeat sent to Redis") # Раскомментируй для отладки
+                except Exception as e:
+                    logger.error(f"Ошибка Heartbeat: {e}")
+                await asyncio.sleep(60)
+
+        asyncio.create_task(heartbeat_task()) 
         
         @dispatcher.message_handler(content_types=types.ContentTypes.TEXT)
         async def handle_message_by_mode(message: types.Message):
@@ -59,7 +73,7 @@ async def on_startup(dispatcher):
                 await rasa_h.process_message(message)
             else:
                 await gigachat_h.process_message(message)
-        
+
         logger.info("Все обработчики успешно зарегистрированы.")
 
     except Exception as e:

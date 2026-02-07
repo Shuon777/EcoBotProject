@@ -502,8 +502,9 @@ async def handle_geo_request(
             logger.info(f"[{user_id}] Пользователь со стенда. Запускаем доп. логику для handle_geo_request.")
             
             external_ids = []
-            if "external_ids" in api_data and isinstance(api_data.get("external_ids"), list):
-                external_ids = api_data["external_ids"]
+            logger.info(f"{api_data}")
+            if "external_id" in api_data and isinstance(api_data.get("external_id"), list):
+                external_ids = api_data["external_id"]
             
             if external_ids:
                 logger.info(f"[{user_id}] Найдено {len(external_ids)} external_id для отправки: {external_ids}")

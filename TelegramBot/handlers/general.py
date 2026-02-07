@@ -19,7 +19,11 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     Создает инлайн-клавиатуру для меню настроек.
     """
     user_settings = get_user_settings(user_id)
-    current_mode = user_settings.get("mode", "rasa")
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: меняем дефолтное значение с "rasa" на "gigachat" ---
+    current_mode = user_settings.get("mode", "gigachat") 
+    # -------------------------------------------------------------------------
+    
     fallback_enabled = user_settings.get("gigachat_fallback", False)
     stoplist_enabled = user_settings.get("stoplist_enabled", True)
     debug_mode_enabled = user_settings.get("debug_mode", False)
@@ -61,7 +65,10 @@ def register_general_handlers(dp: Dispatcher):
         args = message.get_args()
 
         logger.info(f"[{user_id}] Запущена команда /start. Полученные аргументы (args): '{args}'")
+        
+        # Здесь уже стоит "gigachat" по умолчанию, оставляем как есть
         current_mode = get_user_settings(user_id).get("mode", "gigachat")
+        
         mode_name = "Rasa" if current_mode == "rasa" else "GigaChat"
         # --- Логика для deep link ---
         if args and args.startswith("stand_"):
@@ -170,7 +177,7 @@ def register_general_handlers(dp: Dispatcher):
             new_state = not current_fallback_state
             update_user_settings(user_id, {"gigachat_fallback": new_state})
             await callback_query.answer(f"Режим дополнения GigaChat {'включен' if new_state else 'выключен'}")
-        # --- [ИЗМЕНЕНИЕ] ---
+        
         # Добавляем блок для обработки переключения стоп-листа
         elif data == "toggle_stoplist":
             current_stoplist_state = get_user_settings(user_id).get("stoplist_enabled", True)
@@ -189,5 +196,3 @@ def register_general_handlers(dp: Dispatcher):
                 await callback_query.message.edit_reply_markup(keyboard)
         except Exception:
             pass # Если не удалось обновить, ничего страшного
-
-# --- КОНЕЦ ФАЙЛА: handlers/general.py ---
