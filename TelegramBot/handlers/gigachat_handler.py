@@ -1,5 +1,6 @@
 import logging
 import aiohttp
+import json
 import inspect
 from typing import Dict, Any, Callable, Awaitable, List
 from aiogram import types
@@ -209,8 +210,6 @@ class GigaChatHandler:
 
             # Debug Info
             debug_mode = get_user_settings(user_id).get("debug_mode", False)
-            if debug_mode:
-                await message.answer(f"🐞 **Debug Analysis**\n```json\n{final_analysis}\n```", parse_mode="Markdown")
 
             # === ВЫЗОВ ЧИСТОЙ ЛОГИКИ ===
             # Мы передаем только данные и колбэк, никаких message!
@@ -223,6 +222,10 @@ class GigaChatHandler:
                     debug_mode=debug_mode,
                     on_status=telegram_status_adapter 
                 )
+                if debug_mode:
+                    analysis_json = json.dumps(final_analysis, indent=2, ensure_ascii=False)
+                    if responses is None: responses = []
+                    responses.insert(0, CoreResponse(type="debug", content=analysis_json))
             except Exception as e:
                 # Механизм отката (Retry with previous action)
                 latest_history = await self.dialogue_manager.get_latest_history(user_id)
@@ -282,6 +285,13 @@ class GigaChatHandler:
                     photo=resp.content, 
                     caption=None, # <--- ИСПРАВЛЕНО: убрали дублирование ссылки в подпись
                     reply_markup=keyboard
+                )
+            
+            elif resp.type == "debug":
+                await message.answer(
+                    resp.content, 
+                    parse_mode="Markdown", 
+                    custom_type="debug"
                 )
             
             elif resp.type == "map":
