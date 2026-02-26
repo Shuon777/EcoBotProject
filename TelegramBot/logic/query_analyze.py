@@ -73,10 +73,9 @@ class QueryAnalyzer:
         """Подключение к локальной модели через туннель"""
         logger.info("🤖 Инициализация LOCAL OLLAMA (Qwen)")
         return ChatOpenAI(
-            # localhost здесь — это сервер VPS, куда приходит конец туннеля
             base_url="http://localhost:11434/v1",
-            api_key="ollama", # Заглушка
-            model="qwen2.5:7b", # Убедись, что название совпадает с тем, что в ollama list
+            api_key="ollama", 
+            model="qwen2.5:7b", 
             temperature=0.1
         )
 

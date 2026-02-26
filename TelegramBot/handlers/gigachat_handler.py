@@ -288,11 +288,14 @@ class GigaChatHandler:
                 )
             
             elif resp.type == "debug":
-                await message.answer(
-                    resp.content, 
-                    parse_mode="Markdown", 
-                    custom_type="debug"
-                )
+                # ПРОВЕРКА: Если это наш MockMessage (из core_api), шлем custom_type.
+                # Если это реальный aiogram.Message, шлем обычный текст с оформлением.
+                if type(message).__name__ == "MockMessage":
+                    await message.answer(resp.content, custom_type="debug")
+                else:
+                    # Для реального Телеграма красиво оформляем JSON в теги code
+                    debug_text = f"🐞 <b>Debug Analysis</b>\n<code>{resp.content}</code>"
+                    await message.answer(debug_text, parse_mode="HTML")
             
             elif resp.type == "map":
                 # Для карт добавляем кнопку "Открыть интерактивную"
