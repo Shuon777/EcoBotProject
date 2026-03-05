@@ -1,5 +1,8 @@
+import os
 import logging
 import aiohttp
+from pathlib import Path
+from dotenv import dotenv_values, set_key
 from fastapi import FastAPI, Body, HTTPException
 from aiogram import types
 from contextlib import asynccontextmanager
@@ -143,6 +146,56 @@ async def clear_context(data: dict = Body(...)):
         await cm.redis_client.delete(f"fallback_attributes:{user_id}")
     
     return {"status": "cleared"}
+
+BASE_DIR = Path(__file__).parent
+PROMPTS_DIR = BASE_DIR / "logic" / "prompts_structure"
+ENV_PATH = BASE_DIR / ".env"
+
+PROMPT_FILES =[
+    "classifications_actions_part_of_prompt.txt",
+    "classifications_entities_part_of_prompt.txt",
+    "examples_entity.txt",
+    "examples_for_prompt.txt"
+]
+
+@app.get("/prompts")
+async def get_prompts():
+    """Отдает текущее содержимое всех файлов с промптами"""
+    prompts = {}
+    for filename in PROMPT_FILES:
+        filepath = PROMPTS_DIR / filename
+        if filepath.exists():
+            prompts[filename] = filepath.read_text(encoding="utf-8")
+        else:
+            prompts[filename] = ""
+    return prompts
+
+@app.post("/prompts")
+async def update_prompts(data: dict = Body(...)):
+    """Перезаписывает файлы с промптами новыми данными"""
+    for filename, content in data.items():
+        if filename in PROMPT_FILES:
+            filepath = PROMPTS_DIR / filename
+            filepath.write_text(content, encoding="utf-8")
+    return {"status": "success", "message": "Промпты успешно обновлены"}
+
+@app.get("/config")
+async def get_config():
+    """Отдает текущие переменные из .env"""
+    if ENV_PATH.exists():
+        return dotenv_values(ENV_PATH)
+    return {}
+
+@app.post("/config")
+async def update_config(data: dict = Body(...)):
+    """Точечно обновляет значения в файле .env"""
+    if not ENV_PATH.exists():
+        ENV_PATH.touch()
+        
+    for key, value in data.items():
+        # set_key из python-dotenv безопасно обновляет ключи, сохраняя комментарии
+        set_key(str(ENV_PATH), key, str(value))
+    return {"status": "success", "message": "Конфигурация обновлена"}
 
 if __name__ == "__main__":
     import uvicorn

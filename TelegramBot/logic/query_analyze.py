@@ -60,10 +60,10 @@ class QueryAnalyzer:
             else:
                 logger.error(f"❌ Директория prompts_structure не существует: {prompts_dir}")
             
-            self.examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
-            self.actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
-            self.types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
-            self.flora = load_prompt_part('prompts_structure/examples_entity.txt')
+            # self.examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
+            # self.actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
+            # self.types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
+            # self.flora = load_prompt_part('prompts_structure/examples_entity.txt')
             logger.info("GigaChat успешно инициализирован.")
         except Exception as e:
             logger.error(f"Ошибка инициализации GigaChat: {str(e)}")
@@ -176,6 +176,11 @@ class QueryAnalyzer:
         prompt_template = UniversalPrompts.analysis_prompt()
         chain = prompt_template | self.llm
 
+        current_actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
+        current_examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
+        current_types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
+        current_flora = load_prompt_part('prompts_structure/examples_entity.txt')
+
         for attempt in range(MAX_RETRIES + 1):
             try:
                 # Логируем попытку
@@ -185,10 +190,10 @@ class QueryAnalyzer:
                 response = await chain.ainvoke({
                     "query": current_query_prompt, 
                     "history_block": history_block, 
-                    "actions": self.actions, 
-                    "examples": self.examples, 
-                    "types": self.types,
-                    "flora": self.flora
+                    "actions": current_actions, 
+                    "examples": current_examples, 
+                    "types": current_types,
+                    "flora": current_flora
                 })
                 
                 generated_text = response.content.strip()
