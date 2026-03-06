@@ -1,10 +1,6 @@
-# --- НАЧАЛО ФАЙЛА TelegramBot/config.py ---
 import os
-from dotenv import load_dotenv
 import logging
 
-# Загружаем переменные из .env файла
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 def get_env_var(var_name: str, default_value: str = None) -> str:
@@ -46,6 +42,7 @@ API_URLS = {
 
 STAND_SECRET_KEY = get_env_var("STAND_SECRET_KEY")
 STAND_SESSION_TIMEOUT = 300
+
 # --- Таймауты ---
 DEFAULT_TIMEOUT = 45
 TIMEOUT_FOR_OBJECTS_IN_POLYGON = 65

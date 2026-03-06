@@ -2,7 +2,6 @@ import os
 import json
 import logging
 from typing import Dict, Any, Optional
-from dotenv import load_dotenv
 from langchain_gigachat import GigaChat
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -17,7 +16,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-load_dotenv()
+
 
 def load_prompt_part(file_path):
     """

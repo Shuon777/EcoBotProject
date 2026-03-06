@@ -1,3 +1,4 @@
+import os
 import aiohttp
 import logging
 import asyncio
@@ -239,7 +240,7 @@ async def handle_draw_map_of_infrastructure(
                 caption = api_data.get("answer", f"Результаты по вашему запросу на карте.")
                 
                 # Кодирование URL (сохраняем логику кодирования кириллицы в URL)
-                base_url = "https://testecobot.ru/maps/"
+                base_url = os.getenv("BASE_URL_MAPS")
                 static_filename = api_data["static_map"].replace(base_url, "")
                 interactive_filename = api_data["interactive_map"].replace(base_url, "")
                 s_encoded = base_url + quote(static_filename)
@@ -402,7 +403,7 @@ async def handle_geo_request(
             if baikal_relation: payload["baikal_relation"] = baikal_relation
             
             base_url = API_URLS['find_geo_special_description']
-            params = f"query={query_text}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+            params = f"query={query_text}&force_vector_search=true&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
             if should_include_object_name(raw_entity_name):
                 params += f"&object_name={raw_entity_name}"
             

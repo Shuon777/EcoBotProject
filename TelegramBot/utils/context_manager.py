@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class RedisContextManager:
-    def __init__(self, host='localhost', port=6379):
+    def __init__(self, host='localhost', port=6379, db=0):
         try:
             # [# ИЗМЕНЕНО] Используем redis.Redis.from_url для асинхронного клиента
-            self.redis_client = redis.Redis(host=host, port=port, db=0, decode_responses=True)
+            self.redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
             logger.info(f"Асинхронный клиент Redis инициализирован для {host}:{port}")
         except Exception as e:
             logger.critical(f"Не удалось инициализировать Redis: {e}")

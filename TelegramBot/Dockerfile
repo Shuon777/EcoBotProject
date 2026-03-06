@@ -1,16 +1,12 @@
-# Используем "полную" версию Python 3.10
-FROM python:3.10
+FROM python:3.10-slim
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
-ENV PYTHONPATH /app
 
-# Копируем и устанавливаем зависимости
+# Устанавливаем общие зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем остальной код
+# Копируем весь код подмодуля
 COPY . .
 
-# Команда для запуска бота
-CMD ["python", "bot.py"]
+# Мы НЕ пишем здесь CMD, так как у нас две разные точки входа

@@ -1,10 +1,9 @@
-# --- НАЧАЛО ФАЙЛА: bot.py ---
-
+import os
 import logging
 import asyncio
 import aiohttp # [НОВОЕ] Импортируем aiohttp
 from aiogram import executor, types
-
+from dotenv import load_dotenv
 from core.bot_instance import dp
 from utils.settings_manager import get_user_settings
 
@@ -19,6 +18,7 @@ from utils.context_manager import RedisContextManager
 from utils.heartbeat import BotHeartbeat
 
 setup_logging()
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +29,7 @@ async def on_startup(dispatcher):
     
     try:
         qa = QueryAnalyzer()
-        context_manager = RedisContextManager()
+        context_manager = RedisContextManager(host=os.getenv('REDIS_PATH'), port=6379, db=0)
         if not await context_manager.check_connection():
             raise ConnectionError("Не удалось подключиться к Redis")
         dialogue_manager = DialogueManager(context_manager)
@@ -50,7 +50,7 @@ async def on_startup(dispatcher):
             lambda c: not c.data.startswith('/') and c.data not in ["set_mode_rasa", "set_mode_gigachat", "toggle_fallback"]
         )
 
-        hb = BotHeartbeat(host='localhost', port=6379, db=2)
+        hb = BotHeartbeat(host=os.getenv('REDIS_PATH'), port=6379, db=2)
         async def heartbeat_task():
             logger.info("Цикл heartbeat запущен.") # Добавь лог для проверки
             while True:
@@ -86,5 +86,3 @@ async def on_shutdown(dispatcher):
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
-
-# --- КОНЕЦ ФАЙЛА: bot.py ---
