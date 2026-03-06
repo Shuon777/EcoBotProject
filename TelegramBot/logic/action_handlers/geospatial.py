@@ -36,10 +36,7 @@ async def _get_map_from_api(
     responses = []
 
     if debug_mode:
-        responses.append(CoreResponse(
-            type="debug", 
-            content=f"🐞 **API Request (Map)**\nURL: `{full_url}`\nPayload: `{payload}`"
-        ))
+        analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
     async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
         if not map_resp.ok:
@@ -101,10 +98,16 @@ async def handle_nearest(
 
     if on_status:
         await on_status(f"🗺️ Ищу {object_nom} рядом с {geo_nom}...")
-
     try:
+        coords_url = API_URLS["get_coords"]
+        coords_payload = {"name": geo_nom}
+        if debug_mode:
+            if "debug_traces" not in analysis:
+                analysis["debug_traces"] = []
+            analysis["debug_traces"].append(f"URL: `{coords_url}`\nPayload: `{coords_payload}`")
+    
         # 1. Получаем координаты места
-        async with session.post(API_URLS["get_coords"], json={"name": geo_nom}, timeout=DEFAULT_TIMEOUT) as resp:
+        async with session.post(coords_url, json=coords_payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok: 
                 return [CoreResponse(type="text", content=f"Не удалось найти координаты для '{geo_nom}'.")]
             coords = await resp.json()
@@ -212,7 +215,7 @@ async def handle_draw_map_of_infrastructure(
         url = f"{API_URLS['show_map_infrastructure']}?debug_mode={str(debug_mode).lower()}"
         responses = []
         if debug_mode:
-            responses.append(CoreResponse(type="debug", content=f"🐞 **API Request**\nURL: `{url}`\nPayload: `{payload}`"))
+            analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             # Проверка Content-Type (была в старом коде)
@@ -311,7 +314,7 @@ async def handle_objects_in_polygon(
     
     responses = []
     if debug_mode:
-        responses.append(CoreResponse(type="debug", content=f"🐞 **API Request**\nURL: `{url}`\nPayload: `{payload}`"))
+        analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
     try:
         async with session.post(url, json=payload, timeout=TIMEOUT_FOR_OBJECTS_IN_POLYGON) as resp:
@@ -402,7 +405,7 @@ async def handle_geo_request(
 
     responses = []
     if debug_mode:
-        responses.append(CoreResponse(type="debug", content=f"Original: {original_query}\nClean: {clean_query}"))
+        analysis["debug_traces"].append(f"Query Cleaned: {clean_query}")
 
     try:
         # 2. Цикл попыток запроса (с оригинальным и очищенным)
@@ -427,6 +430,12 @@ async def handle_geo_request(
                 params += f"&object_name={raw_entity_name}"
             
             url = f"{base_url}?{params}"
+
+            if debug_mode:
+                # Если в словаре ещё нет ключа, создаем его на всякий случай
+                if "debug_traces" not in analysis:
+                    analysis["debug_traces"] = []
+                analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
             async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
                 if resp.ok:

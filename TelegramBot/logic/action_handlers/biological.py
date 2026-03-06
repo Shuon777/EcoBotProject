@@ -88,10 +88,7 @@ async def handle_get_picture(
 
         responses = []
         if debug_mode:
-            responses.append(CoreResponse(
-                type="debug", 
-                content=f"🐞 **API Request**\nURL: `{url}`\nPayload: `{payload}`"
-            ))
+            analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
@@ -223,7 +220,7 @@ async def handle_get_description(
 
     responses = []
     if debug_mode:
-        responses.append(CoreResponse(type="debug", content=f"🐞 **API Request**\nURL: `{find_url}`\nPayload: `{payload}`"))
+        analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
 
     try:
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
@@ -280,6 +277,10 @@ async def handle_get_description(
                             f"&debug_mode={str(debug_mode).lower()}"
                             f"&in_stoplist={stoplist_param}"
                             f"&query={original_query}")
+                if debug_mode:
+                    if "debug_traces" not in analysis:
+                        analysis["debug_traces"] = []
+                    analysis["debug_traces"].append(f"URL (GET): `{desc_url}`\nPayload: `Нет (GET запрос)`")
 
                 async with session.get(desc_url, timeout=DEFAULT_TIMEOUT) as desc_resp:
                     if desc_resp.ok:

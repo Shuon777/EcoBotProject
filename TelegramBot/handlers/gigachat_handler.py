@@ -220,9 +220,11 @@ class GigaChatHandler:
             # Debug Info
             debug_mode = get_user_settings(user_id).get("debug_mode", False)
 
-            # === ВЫЗОВ ЧИСТОЙ ЛОГИКИ ===
-            # Мы передаем только данные и колбэк, никаких message!
             try:
+                # Подготавливаем корзину для следов API
+                if debug_mode:
+                    final_analysis["debug_traces"] =[]
+
                 responses = await handler(
                     session=self.session,
                     analysis=final_analysis,
@@ -231,10 +233,24 @@ class GigaChatHandler:
                     debug_mode=debug_mode,
                     on_status=telegram_status_adapter 
                 )
+                
+                # Собираем единый красивый дебаг-ответ
                 if debug_mode:
-                    analysis_json = json.dumps(final_analysis, indent=2, ensure_ascii=False)
-                    if responses is None: responses = []
-                    responses.insert(0, CoreResponse(type="debug", content=analysis_json))
+                    if responses is None: responses =[]
+                    
+                    # Делаем копию без служебного поля для красивого вывода NLU
+                    clean_analysis = final_analysis.copy()
+                    traces = clean_analysis.pop("debug_traces", [])
+                    
+                    debug_parts =[f"🧠 <b>NLU Analysis:</b>\n{json.dumps(clean_analysis, indent=2, ensure_ascii=False)}"]
+                    
+                    if traces:
+                        debug_parts.append("🌐 <b>API Traces:</b>")
+                        for trace in traces:
+                            debug_parts.append(trace)
+                            
+                    combined_debug_text = "\n\n".join(debug_parts)
+                    responses.insert(0, CoreResponse(type="debug", content=combined_debug_text)) 
             except Exception as e:
                 # Механизм отката (Retry with previous action)
                 latest_history = await self.dialogue_manager.get_latest_history(user_id)
