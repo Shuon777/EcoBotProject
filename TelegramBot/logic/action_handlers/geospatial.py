@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, TIMEOUT_FOR_OBJECTS_IN_POLYGON
 from utils.settings_manager import get_user_settings
-from utils.error_logger import send_error_log, log_api_error
+from utils.error_logger import log_critical, log_api_fail, log_zero_results
 from logic.entity_normalizer import normalize_entity_name_for_maps, ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
 from logic.stand_manager import is_stand_session_active
@@ -43,7 +43,7 @@ async def _get_map_from_api(
 
     async with session.post(full_url, json=payload, timeout=DEFAULT_TIMEOUT) as map_resp:
         if not map_resp.ok:
-            await log_api_error(session, user_id, full_url, map_resp.status, await map_resp.text(), str(payload), context=analysis)
+            await log_api_fail(session, user_id, full_url, map_resp.status, await map_resp.text(), str(payload), context=analysis)
             return [CoreResponse(type="text", content="Не удалось построить карту.")]
 
         api_data = await map_resp.json()
@@ -58,6 +58,12 @@ async def _get_map_from_api(
             caption = text_header + "• " + "\n• ".join(names)
 
         if api_data.get("status") == "no_objects":
+            await log_zero_results(
+                session, analysis.get("search_query", "Map request"), user_id,
+                action="show_map",
+                search_params=payload,
+                context=analysis
+            )
             text = f"К сожалению, я не нашел '{object_name}'" + (f" поблизости от '{geo_name}'." if geo_name else " на карте.")
             responses.append(CoreResponse(type="text", content=text))
 
@@ -126,7 +132,7 @@ async def handle_nearest(
         )
     except Exception as e:
         logger.error(f"Ошибка в handle_nearest: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content="Произошла внутренняя ошибка при поиске ближайших мест.")]
 
 
@@ -212,7 +218,7 @@ async def handle_draw_map_of_infrastructure(
             # Проверка Content-Type (была в старом коде)
             content_type = resp.headers.get('Content-Type', '').lower()
             if 'application/json' not in content_type:
-                await log_api_error(session, user_id, url, resp.status, f"Invalid Content-Type: {content_type}", original_query, context=analysis)
+                await log_api_fail(session, user_id, url, resp.status, f"Invalid Content-Type: {content_type}", original_query, context=analysis)
                 return [CoreResponse(type="text", content="Ошибка сервера инфраструктуры.")]
 
             api_data = await resp.json()
@@ -258,13 +264,20 @@ async def handle_draw_map_of_infrastructure(
                     obj_names = [obj["name"] for obj in api_data["objects"] if "name" in obj]
                     if obj_names:
                         text_response += f"\n\nНайдены объекты:\n• " + "\n• ".join(obj_names)
+                else:
+                    await log_zero_results(
+                        session, original_query, user_id,
+                        action="show_map_infrastructure",
+                        search_params=payload,
+                        context=analysis
+                    )
                 responses.append(CoreResponse(type="text", content=text_response, used_objects=api_data.get("used_objects", [])))
 
             return responses
 
     except Exception as e:
         logger.error(f"Ошибка в infrastructure: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content="Произошла внутренняя ошибка при поиске.")]
 
 
@@ -303,11 +316,18 @@ async def handle_objects_in_polygon(
     try:
         async with session.post(url, json=payload, timeout=TIMEOUT_FOR_OBJECTS_IN_POLYGON) as resp:
             if not resp.ok:
-                await log_api_error(session, user_id or "unknown", url, resp.status, await resp.text(), original_query, context=analysis)
+                await log_api_fail(session, user_id or "unknown", url, resp.status, await resp.text(), original_query, context=analysis)
                 return [CoreResponse(type="text", content=f"Не удалось найти информацию для '{geo_nom}'.")]
 
             api_data = await resp.json()
             objects_list = api_data.get("all_biological_names", [])
+            if not objects_list:
+                await log_zero_results(
+                    session, original_query, user_id,
+                    action="objects_in_polygon",
+                    search_params=payload,
+                    context=analysis
+                )
 
             caption = f"В районе «{geo_nom}» не найдено объектов."
             if objects_list:
@@ -345,7 +365,7 @@ async def handle_objects_in_polygon(
 
     except Exception as e:
         logger.error(f"Ошибка objects_in_polygon: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content=f"Ошибка при поиске объектов в «{geo_nom}».")]
 
 
@@ -414,7 +434,7 @@ async def handle_geo_request(
                     break # Успех, выходим из цикла
                 elif i == len(queries_to_try) - 1:
                     # Если это была последняя попытка и она провалилась
-                    await log_api_error(session, user_id, url, resp.status, await resp.text(), query_text, context=analysis)
+                    await log_api_fail(session, user_id, url, resp.status, await resp.text(), query_text, context=analysis)
                     return [CoreResponse(type="text", content="Извините, информация временно недоступна.")]
 
         # 3. Логика Стенда (СОХРАНЕНА ПОЛНОСТЬЮ)
@@ -479,13 +499,19 @@ async def handle_geo_request(
             # ============================================
 
         if not responses or (len(responses) == 1 and responses[0].type == 'debug'):
-             responses.append(CoreResponse(type="text", content="К сожалению, по вашему запросу ничего не найдено."))
+            await log_zero_results(
+                session, original_query, user_id,
+                action="describe_geo",
+                search_params={"location": location_name, "entity": raw_entity_name},
+                context=analysis
+            )
+            responses.append(CoreResponse(type="text", content="К сожалению, по вашему запросу ничего не найдено."))
 
         return responses
 
     except Exception as e:
         logger.error(f"Ошибка geo_request: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content="Внутренняя ошибка поиска.")]
 
 async def handle_draw_map_of_list_stub(

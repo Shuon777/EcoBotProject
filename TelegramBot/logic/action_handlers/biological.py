@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List, Callable, Awaitable
 from config import API_URLS, DEFAULT_TIMEOUT, GIGACHAT_TIMEOUT, GIGACHAT_FALLBACK_URL
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
-from utils.error_logger import send_error_log, log_api_error
+from utils.error_logger import log_critical, log_api_fail, log_zero_results
 
 # Импортируем нашу новую модель
 from core.model import CoreResponse
@@ -96,13 +96,21 @@ async def handle_get_picture(
         async with session.post(url, json=payload, timeout=DEFAULT_TIMEOUT) as resp:
             if not resp.ok:
                 resp_text = await resp.text()
-                await log_api_error(session, user_id, url, resp.status, resp_text, original_query, context=analysis)
+                await log_api_fail(session, user_id, url, resp.status, resp_text, original_query, context=analysis)
             
             api_data = await resp.json() if resp.ok else {}
 
             # ЛОГИКА FALLBACK (если картинки не найдены)
             if not resp.ok or not api_data.get("images"):
                 logger.info(f"[{user_id}] Изображения не найдены. Запуск fallback-анализа.")
+                
+                if resp.ok and not api_data.get("images"):
+                    await log_zero_results(
+                        session, original_query, user_id, 
+                        action="show_image", 
+                        search_params={"object": object_nom, "features": features}, 
+                        context=analysis
+                    )
                 
                 if not attributes:
                     return [CoreResponse(type="text", content=f"Извините, я не нашел изображений для «{object_nom}».")]
@@ -185,7 +193,7 @@ async def handle_get_picture(
 
     except Exception as e:
         logger.error(f"Ошибка в handle_get_picture: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content="Произошла внутренняя ошибка при поиске изображений.")]
 
 
@@ -220,7 +228,7 @@ async def handle_get_description(
     try:
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
             if not find_resp.ok:
-                await log_api_error(session, user_id, find_url, find_resp.status, await find_resp.text(), original_query, context=analysis)
+                await log_api_fail(session, user_id, find_url, find_resp.status, await find_resp.text(), original_query, context=analysis)
                 return [CoreResponse(type="text", content=f"Ошибка API при поиске «{object_nom}».")]
             
             data = await find_resp.json()
@@ -290,7 +298,13 @@ async def handle_get_description(
                                 used_objects=api_data.get("used_objects", [])
                             ))
                             return responses
-
+                        
+            await log_zero_results(
+                session, original_query, user_id, 
+                action="describe", 
+                search_params={"object": object_nom}, 
+                context=analysis
+            )
             # СЛУЧАЙ 3: Не найдено (Not Found) - Пробуем GigaChat Fallback
             if get_user_fallback_setting(user_id):
                 if on_status: await on_status("Обращаюсь к GigaChat...")
@@ -307,5 +321,5 @@ async def handle_get_description(
 
     except Exception as e:
         logger.error(f"Ошибка в handle_get_description: {e}", exc_info=True)
-        await send_error_log(session, original_query, user_id, e, analysis)
+        await log_critical(session, original_query, user_id, e, analysis)
         return [CoreResponse(type="text", content="Проблема с подключением к серверу описаний.")]

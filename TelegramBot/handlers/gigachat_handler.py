@@ -24,7 +24,7 @@ from utils.bot_utils import send_long_message, convert_llm_markdown_to_html
 from utils.settings_manager import get_user_settings
 from utils.context_manager import RedisContextManager
 from utils.feedback_manager import FeedbackManager
-from utils.error_logger import send_error_log
+from utils.error_logger import log_critical, log_nlu_miss
 from config import API_URLS
 
 unhandled_logger = logging.getLogger("unhandled")
@@ -187,7 +187,11 @@ class GigaChatHandler:
                 
                 analysis = await self.qa.analyze_query(query, history=latest_history)
                 if not analysis:
-                    await message.answer("Не удалось проанализировать запрос.")
+                    await log_nlu_miss(
+                        self.session, query, user_id, 
+                        reason="LLM не смогла выдать валидный JSON за 3 попытки"
+                    )
+                    await message.answer("К сожалению, мне не удалось проанализировать ваш запрос.")
                     return
 
                 final_analysis = await self.dialogue_manager.enrich_request(user_id, analysis, query)
@@ -205,6 +209,11 @@ class GigaChatHandler:
             if not handler:
                 logger.warning(f"[{user_id}] Нет обработчика для {action}")
                 unhandled_logger.info(f"USER_ID [{user_id}] - QUERY: \"{query}\"")
+                await log_nlu_miss(
+                    self.session, query, user_id, 
+                    reason=f"Нет обработчика для action: {action}",
+                    context=final_analysis
+                )
                 await message.answer("Я пока не умею это делать. Попробуйте переформулировать.")
                 return
 
@@ -254,7 +263,7 @@ class GigaChatHandler:
             
         except Exception as e:
             logger.error(f"[{user_id}] Error in process_message: {e}", exc_info=True)
-            await send_error_log(self.session, query, user_id, e, final_analysis if 'final_analysis' in locals() else {})
+            await log_critical(self.session, query, user_id, e, final_analysis if 'final_analysis' in locals() else {})
             await message.answer("Произошла ошибка при обработке запроса.")
         finally:
             await feedback.cleanup()
