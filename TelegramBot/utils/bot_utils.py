@@ -129,26 +129,6 @@ async def send_normalized_message(message: types.Message, norm: dict):
          if "context" in norm:
              sent_message.context = norm["context"]
 
-def create_structured_response(api_data: dict, responses: list) -> list:
-    if not isinstance(api_data, dict):
-        return responses
-
-    used_objects = api_data.get("used_objects", [])
-    if responses and used_objects:
-        responses[0]['used_objects'] = used_objects
-        logging.getLogger(__name__).info(f"К ответу прикреплено used_objects: {len(used_objects)} шт.")
-        
-    return responses
-
-def escape_markdown(text: str) -> str:
-    """
-    Экранирует специальные символы Markdown V2 в тексте.
-    """
-    if not text:
-        return ""
-    escape_chars = r'\_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
-
 def convert_llm_markdown_to_html(text: str) -> str:
     """
     Преобразует базовую Markdown-разметку LLM (**, ###) в HTML,

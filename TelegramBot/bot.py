@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-import aiohttp # [НОВОЕ] Импортируем aiohttp
+import aiohttp
 from aiogram import executor, types
 from dotenv import load_dotenv
 from core.bot_instance import dp

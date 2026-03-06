@@ -91,16 +91,22 @@ class FeedbackManager:
         parse_mode: Optional[str] = None
     ) -> Optional[types.Message]:
         """
-        Отправляет промежуточное сообщение о прогрессе обработки.
-        
-        Args:
-            text: Текст сообщения
-            keep: Если True, сообщение не будет автоматически удалено
-            parse_mode: Режим парсинга (Markdown, HTML)
-            
-        Returns:
-            Отправленное сообщение или None в случае ошибки
+        Отправляет или ОБНОВЛЯЕТ промежуточное сообщение о прогрессе обработки.
         """
+        # Если промежуточное сообщение уже есть и мы не хотим его "закреплять" (keep)
+        if not keep and self.feedback_messages:
+            last_msg = self.feedback_messages[-1]
+            try:
+                await last_msg.edit_text(text, parse_mode=parse_mode)
+                logger.info(f"[{self.user_id}] Обновлено промежуточное сообщение: {text[:60]}")
+                return last_msg
+            except MessageNotModified:
+                return last_msg  # Текст не изменился, все ок
+            except Exception as e:
+                # Если редактирование не удалось (например, сообщение удалил юзер), шлем новое
+                pass
+
+        # Если сообщений еще нет или edit_text упал
         try:
             sent_message = await self.message.answer(text, parse_mode=parse_mode)
             if not keep:

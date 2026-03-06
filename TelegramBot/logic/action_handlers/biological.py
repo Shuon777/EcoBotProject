@@ -61,7 +61,6 @@ async def handle_get_picture(
     user_id: str, 
     original_query: str,
     debug_mode: bool = False,
-    # Новый аргумент: функция для обновления статуса ("печатает...", "ищет...")
     on_status: Optional[Callable[[str], Awaitable[None]]] = None
 ) -> List[CoreResponse]:
     
@@ -111,35 +110,39 @@ async def handle_get_picture(
                 if on_status:
                     await on_status("🔍 Изучаю альтернативные варианты...")
 
-                # Генерируем кнопки упрощения (Бизнес-логика сохранена!)
-                fallback_options = []
-                
-                # Проверка: Без сезона
-                if "season" in attributes:
-                    test_features = features.copy(); test_features.pop("season")
-                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
-                        fallback_options.append({"text": "❄️ Без сезона", "callback_data": f"fallback:no_season:{object_nom}"})
-                
-                # Проверка: Без места
-                if "habitat" in attributes:
-                    test_features = features.copy(); test_features.pop("habitat")
-                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
-                        fallback_options.append({"text": "🌲 Без места", "callback_data": f"fallback:no_habitat:{object_nom}"})
+                # Генерируем кнопки упрощения
+                fallback_tasks = []
+                options_meta = []
 
-                # Проверка: Без плодов/цветения
+                if "season" in attributes:
+                    tf = features.copy(); tf.pop("season")
+                    fallback_tasks.append(check_simplified_search(session, object_nom, tf, debug_mode))
+                    options_meta.append({"text": "❄️ Без сезона", "callback_data": f"fallback:no_season:{object_nom}"})
+                
+                if "habitat" in attributes:
+                    tf = features.copy(); tf.pop("habitat")
+                    fallback_tasks.append(check_simplified_search(session, object_nom, tf, debug_mode))
+                    options_meta.append({"text": "🌲 Без места", "callback_data": f"fallback:no_habitat:{object_nom}"})
+
                 if "fruits_present" in attributes:
-                    test_features = features.copy(); test_features.pop("fruits_present")
-                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
-                        fallback_options.append({"text": "🌰 Без плода", "callback_data": f"fallback:no_fruits:{object_nom}"})
+                    tf = features.copy(); tf.pop("fruits_present")
+                    fallback_tasks.append(check_simplified_search(session, object_nom, tf, debug_mode))
+                    options_meta.append({"text": "🌰 Без плода", "callback_data": f"fallback:no_fruits:{object_nom}"})
                 
                 if "flowering" in attributes:
-                    test_features = features.copy(); test_features.pop("flowering")
-                    if await check_simplified_search(session, object_nom, test_features, debug_mode):
-                        fallback_options.append({"text": "🌸 Не цветущий", "callback_data": f"fallback:no_flowering:{object_nom}"})
+                    tf = features.copy(); tf.pop("flowering")
+                    fallback_tasks.append(check_simplified_search(session, object_nom, tf, debug_mode))
+                    options_meta.append({"text": "🌸 Не цветущий", "callback_data": f"fallback:no_flowering:{object_nom}"})
 
-                # Проверка: Базовый поиск
-                if await check_simplified_search(session, object_nom, {}, debug_mode):
-                    fallback_options.append({"text": "🖼️ Только объект", "callback_data": f"fallback:basic:{object_nom}"})
+                # Базовый поиск
+                fallback_tasks.append(check_simplified_search(session, object_nom, {}, debug_mode))
+                options_meta.append({"text": "🖼️ Только объект", "callback_data": f"fallback:basic:{object_nom}"})
+                
+                # Ждем выполнения всех запросов ОДНОВРЕМЕННО
+                results = await asyncio.gather(*fallback_tasks)
+                
+                # Собираем только те кнопки, где API вернул True
+                fallback_options = [meta for meta, is_valid in zip(options_meta, results) if is_valid]
                 
                 if not fallback_options:
                     return [CoreResponse(type="text", content=f"Извините, не нашел изображений для «{object_nom}» с любыми комбинациями признаков.")]

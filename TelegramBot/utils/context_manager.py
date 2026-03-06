@@ -6,8 +6,6 @@ from config import CONTEXT_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 
-
-
 class RedisContextManager:
     def __init__(self, host='localhost', port=6379, db=0):
         try:
@@ -31,9 +29,13 @@ class RedisContextManager:
             return False
 
     def _get_key(self, user_id: str) -> str:
+        # Если в ключе уже есть двоеточие, значит это кастомный системный ключ 
+        if ":" in str(user_id):
+            return str(user_id)
+            
+        # Иначе это просто ID юзера, добавляем стандартный префикс истории
         return f"gigachat_context:{user_id}"
 
-    # [# ИЗМЕНЕНО] Все методы теперь асинхронные
     async def get_context(self, user_id: str) -> Dict[str, Any]:
         if not self.redis_client: return {}
         key = self._get_key(user_id)

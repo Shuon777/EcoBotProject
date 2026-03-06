@@ -17,33 +17,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def load_prompt_part(file_path):
-    """
-    Функция для загрузки файла, содержайщий часть универсального промпта
-    """
-    try:
-        # Получаем директорию, где находится query_analyze.py
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Формируем полный путь к файлу
-        full_path = os.path.join(current_dir, file_path)
-        
-        logger.info(f"🔄 Пытаемся загрузить: {full_path}")
-        
-        with open(full_path, 'r', encoding='utf-8') as file:
-            content = file.read().strip()
-            logger.info(f"✅ Файл загружен: {file_path} ({len(content)} символов)")
-            return content
-    except FileNotFoundError:
-        logger.error(f"❌ Файл {full_path} не найден. Использую пустую строку.")
-        return ""
-    except Exception as e:
-        logger.error(f"❌ Ошибка при чтении {full_path}: {e}")
-        return ""
-
 class QueryAnalyzer:
     def __init__(self):
         """Инициализация обработчика запроса пользователя"""
+        self.prompts_cache = {}  # Кэш текстов промптов
+        self.prompts_mtime = {}  # Кэш времени последнего изменения файлов
         try:
             self.llm = self._init_ollama()
             
@@ -58,16 +36,38 @@ class QueryAnalyzer:
                 logger.info(f"📋 Файлы в prompts_structure: {files}")
             else:
                 logger.error(f"❌ Директория prompts_structure не существует: {prompts_dir}")
-            
-            # self.examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
-            # self.actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
-            # self.types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
-            # self.flora = load_prompt_part('prompts_structure/examples_entity.txt')
             logger.info("GigaChat успешно инициализирован.")
         except Exception as e:
             logger.error(f"Ошибка инициализации GigaChat: {str(e)}")
             raise
-    
+    def _get_prompt_part(self, file_path: str) -> str:
+        """Берет промпт из кэша. Читает с диска только если файл обновился."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        full_path = os.path.join(current_dir, file_path)
+        
+        try:
+            # Получаем время последнего изменения файла (работает мгновенно)
+            current_mtime = os.path.getmtime(full_path)
+            
+            # Если файл есть в кэше и не менялся — отдаем из памяти
+            if file_path in self.prompts_cache and self.prompts_mtime.get(file_path) == current_mtime:
+                return self.prompts_cache[file_path]
+                
+            # Иначе читаем с диска и обновляем кэш
+            with open(full_path, 'r', encoding='utf-8') as file:
+                content = file.read().strip()
+                self.prompts_cache[file_path] = content
+                self.prompts_mtime[file_path] = current_mtime
+                logger.info(f"✅ Промпт загружен/обновлен в кэше: {file_path}")
+                return content
+                
+        except FileNotFoundError:
+            logger.error(f"❌ Файл {full_path} не найден. Использую пустую строку.")
+            return ""
+        except Exception as e:
+            logger.error(f"❌ Ошибка при чтении {full_path}: {e}")
+            return ""
+        
     def _init_ollama(self):
         """Подключение к локальной модели через туннель"""
         logger.info("🤖 Инициализация LOCAL OLLAMA (Qwen)")
@@ -175,10 +175,10 @@ class QueryAnalyzer:
         prompt_template = UniversalPrompts.analysis_prompt()
         chain = prompt_template | self.llm
 
-        current_actions = load_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
-        current_examples = load_prompt_part("prompts_structure/examples_for_prompt.txt")
-        current_types = load_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
-        current_flora = load_prompt_part('prompts_structure/examples_entity.txt')
+        current_actions = self._get_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
+        current_examples = self._get_prompt_part("prompts_structure/examples_for_prompt.txt")
+        current_types = self._get_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
+        current_flora = self._get_prompt_part('prompts_structure/examples_entity.txt')
 
         for attempt in range(MAX_RETRIES + 1):
             try:

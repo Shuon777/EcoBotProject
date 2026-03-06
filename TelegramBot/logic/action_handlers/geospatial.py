@@ -8,8 +8,7 @@ from urllib.parse import quote
 from config import API_URLS, DEFAULT_TIMEOUT, STAND_SECRET_KEY, TIMEOUT_FOR_OBJECTS_IN_POLYGON
 from utils.settings_manager import get_user_settings
 from utils.error_logger import send_error_log, log_api_error
-from logic.entity_normalizer_for_maps import normalize_entity_name_for_maps, ENTITY_MAP
-from logic.entity_normalizer import should_include_object_name
+from logic.entity_normalizer import normalize_entity_name_for_maps, ENTITY_MAP, should_include_object_name
 from logic.baikal_context import determine_baikal_relation
 from logic.stand_manager import is_stand_session_active
 
