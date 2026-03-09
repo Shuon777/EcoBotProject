@@ -223,7 +223,7 @@ class GigaChatHandler:
             try:
                 # Подготавливаем корзину для следов API
                 if debug_mode:
-                    final_analysis["debug_traces"] =[]
+                    final_analysis["debug_traces"] = []
 
                 responses = await handler(
                     session=self.session,

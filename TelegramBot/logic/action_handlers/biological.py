@@ -220,7 +220,7 @@ async def handle_get_description(
 
     responses = []
     if debug_mode:
-        analysis["debug_traces"].append(f"URL: `{url}`\nPayload: `{payload}`")
+        analysis["debug_traces"].append(f"URL: `{find_url}`\nPayload: `{payload}`")
 
     try:
         async with session.post(find_url, json=payload, timeout=DEFAULT_TIMEOUT) as find_resp:
