@@ -7,9 +7,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import ValidationError
-from .validator import AnalysisResponse
 
-from .prompts_structure.prompts import UniversalPrompts
+from .prompts import UniversalPrompts
+from .validator import AnalysisResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,15 +27,14 @@ class QueryAnalyzer:
             
             # Добавим отладку структуры директорий
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            prompts_dir = os.path.join(current_dir, 'prompts_structure')
-            logger.info(f"📁 Текущая директория: {current_dir}")
-            logger.info(f"📁 Директория prompts_structure: {prompts_dir}")
+            llm_dir = os.path.join(current_dir)
+            logger.info(f"📁 Директория llm_analyzer: {llm_dir}")
             
-            if os.path.exists(prompts_dir):
-                files = os.listdir(prompts_dir)
-                logger.info(f"📋 Файлы в prompts_structure: {files}")
+            if os.path.exists(llm_dir):
+                files = os.listdir(llm_dir)
+                logger.info(f"📋 Файлы в llm_analyzer: {files}")
             else:
-                logger.error(f"❌ Директория prompts_structure не существует: {prompts_dir}")
+                logger.error(f"❌ Директория llm_analyzer не существует: {llm_dir}")
             logger.info("GigaChat успешно инициализирован.")
         except Exception as e:
             logger.error(f"Ошибка инициализации GigaChat: {str(e)}")
@@ -97,45 +96,6 @@ class QueryAnalyzer:
             logger.error(f"Ошибка создания GigaChat инстанса: {str(e)}")
             raise
 
-    def _create_history_block(self, history: Optional[Dict[str, Any]]) -> str:
-        """Создает блок истории из данных с фильтрацией ответов API"""
-        if not history:
-            return ""
-            
-        prev_query = history.get("query")
-        prev_response_list = history.get("response", [])
-        
-        # Извлекаем и фильтруем текстовое содержимое
-        prev_response_texts = []
-        for resp in prev_response_list:
-            if resp.get("type") == "text":
-                content = str(resp.get("content", ""))
-                # Фильтруем нежелательные ответы
-                if not self._is_blocked_response(content):
-                    prev_response_texts.append(content)
-        
-        # Если текста не было (например, только карта), возьмем caption
-        if not prev_response_texts:
-            for resp in prev_response_list:
-                if resp.get("caption"):
-                    caption = str(resp.get("caption", ""))
-                    if not self._is_blocked_response(caption):
-                        prev_response_texts.append(caption)
-
-        prev_response = "\n".join(prev_response_texts).strip()
-
-        if prev_query and prev_response:
-            history_block = (
-                "---\n"
-                "Предыдущий диалог:\n"
-                f"- Запрос пользователя: \"{prev_query}\"\n"
-                f"- Ответ бота: {prev_response}\n"
-                "---\n"
-            )
-            logger.info(f"Используется контекст: {history_block}")
-            return history_block
-        return ""
-
     def _is_blocked_response(self, text: str) -> bool:
         """Проверяет, является ли ответ заблокированной фразой"""
         blocked_phrases = [
@@ -164,7 +124,7 @@ class QueryAnalyzer:
             
         return json_str
 
-    async def _make_llm_request(self, query: str, history_block: str) -> Optional[Dict[str, Any]]:
+    async def _make_llm_request(self, query: str) -> Optional[Dict[str, Any]]:
         """
         Делает запрос к LLM с валидацией и автоматическим исправлением ошибок (Retry Loop).
         """
@@ -178,7 +138,7 @@ class QueryAnalyzer:
         current_actions = self._get_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
         current_examples = self._get_prompt_part("prompts_structure/examples_for_prompt.txt")
         current_types = self._get_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
-        current_flora = self._get_prompt_part('prompts_structure/examples_entity.txt')
+        #current_flora = self._get_prompt_part('prompts_structure/examples_entity.txt')
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -187,22 +147,18 @@ class QueryAnalyzer:
                     logger.info(f"🔄 Попытка исправления #{attempt} для запроса '{query}'")
 
                 response = await chain.ainvoke({
-                    "query": current_query_prompt, 
-                    "history_block": history_block, 
+                    "query": current_query_prompt,  
                     "actions": current_actions, 
                     "examples": current_examples, 
                     "types": current_types,
-                    "flora": current_flora
                 })
                 
                 generated_text = response.content.strip()
-                # Используем наш безопасный экстрактор (который мы добавили на прошлом шаге)
                 json_text = self._extract_json_safe(generated_text)
                 
                 if not json_text:
                     raise ValueError("JSON не найден в ответе LLM")
 
-                # Парсим JSON
                 parsed_json = json.loads(json_text)
                 
                 # --- ВАЛИДАЦИЯ PYDANTIC ---
@@ -312,26 +268,21 @@ class QueryAnalyzer:
             logger.error(f"Ошибка при генерации Small Talk: {e}", exc_info=True)
             return "Здравствуйте! Я готов помочь вам узнать больше о природе Байкала."
 
-    async def analyze_query(self, query: str, history: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    async def analyze_query(self, query: str) -> Optional[Dict[str, Any]]:
         """
         Анализирует запрос пользователя с помощью универсального промпта и возвращает структурированный JSON.
+        Внимание: LLM работает БЕЗ истории. Обогащением контекста занимается DialogueManager.
         """
-        logger.info(f"Универсальный анализ запроса: '{query}'")
-    
-        # Первая попытка - с историей
-        history_block = self._create_history_block(history)
-        result = await self._make_llm_request(query, history_block)
+        logger.info(f"Универсальный анализ запроса (State-less): '{query}'")
         
-        # Если первая попытка не удалась и была история, пробуем без истории
-        if result is None and history:
-            logger.info(f"🔄 Повторный запрос без истории для: '{query}'")
-            result = await self._make_llm_request(query, "")
+        # Делаем единственный прямой запрос без истории
+        result = await self._make_llm_request(query)
+        
+        if result is not None:
+            logger.info(f"✅ Анализ успешен: '{query}' -> Action: {result.get('action')}")
+        else:
+            logger.error(f"❌ LLM не смогла распарсить запрос: '{query}'")
             
-            if result is not None:
-                logger.info(f"✅ Повторный запрос без истории успешен для: '{query}'")
-            else:
-                logger.error(f"❌ Оба запроса (с историей и без) не удались для: '{query}'")
-        
         return result
         
     async def analyze_location_objects(self, geo_place: str, objects_list: list) -> dict:

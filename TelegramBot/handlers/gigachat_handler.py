@@ -7,7 +7,7 @@ from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import re
 
-from logic.query_analyze import QueryAnalyzer
+from logic.llm_analyzer.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 
 # Импортируем чистые функции логики
@@ -16,6 +16,7 @@ from logic.action_handlers.geospatial import (
     handle_draw_locate_map, handle_nearest, handle_objects_in_polygon,
     handle_geo_request, handle_draw_map_of_infrastructure, handle_draw_map_of_list_stub
 )
+from logic.action_handlers.sevices import handle_describe_service
 
 # Импортируем нашу модель данных
 from core.model import CoreResponse
@@ -40,7 +41,6 @@ class FakeCallbackQuery:
         self.message = message
         self.data = data
         self.from_user = message.from_user
-    
     async def answer(self, *args, **kwargs):
         pass
 
@@ -61,6 +61,7 @@ class GigaChatHandler:
             ("describe", "Biological"): handle_get_description,
             ("describe", "Infrastructure"): handle_geo_request,
             ("describe", "GeoPlace"): handle_geo_request,
+            ("describe", "Service"): handle_describe_service,
             ("show_image", "Biological"): handle_get_picture,
             ("show_map", "Biological"): handle_draw_locate_map,
             ("show_map", "Infrastructure"): handle_draw_map_of_infrastructure,
@@ -155,12 +156,11 @@ class GigaChatHandler:
     async def process_message(self, message: types.Message):
         user_id = str(message.chat.id)
         query = message.text
+
         logger.info(f"[{user_id}] Получен запрос: '{query}'")
         
-        # FeedbackManager - это Telegram-специфичная утилита
         feedback = FeedbackManager(message)
         
-        # Создаем функцию-адаптер для статусов
         async def telegram_status_adapter(text: str):
             await feedback.send_progress_message(text)
 
@@ -185,7 +185,7 @@ class GigaChatHandler:
 
                 await feedback.send_progress_message("🔍 Получил ваш запрос, анализирую...")
                 
-                analysis = await self.qa.analyze_query(query, history=latest_history)
+                analysis = await self.qa.analyze_query(query)
                 if not analysis:
                     await log_nlu_miss(
                         self.session, query, user_id, 

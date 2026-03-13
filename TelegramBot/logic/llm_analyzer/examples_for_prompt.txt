@@ -1,3 +1,23 @@
+Запрос: "Кто проводит экскурсии в Байкальском музее?"
+Результат:
+{
+  "_reasoning": "Пользователь спрашивает об организаторе услуги (экскурсии). Тип объекта — Service.",
+  "action": "describe",
+  "primary_entity": { "name": "экскурсии", "type": "Service" },
+  "secondary_entity": { "name": "Байкальский музей", "type": "GeoPlace", "category": "", "subcategory": [] },
+  "attributes": {}
+}
+
+Запрос: "Как заказать экскурсию?"
+Результат:
+{
+  "_reasoning": "Запрос о способе получения услуги (заказ экскурсии).",
+  "action": "describe",
+  "primary_entity": { "name": "заказ экскурсии", "type": "Service" },
+  "secondary_entity": null,
+  "attributes": {}
+}
+
 Запрос: "А расскажи про нее"
 Результат:
 {

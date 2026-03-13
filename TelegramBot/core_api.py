@@ -8,7 +8,7 @@ from aiogram import types
 from contextlib import asynccontextmanager
 
 # Импорты логики бота
-from logic.query_analyze import QueryAnalyzer
+from logic.llm_analyzer.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from utils.context_manager import RedisContextManager
 from handlers.gigachat_handler import GigaChatHandler

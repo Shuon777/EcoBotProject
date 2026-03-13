@@ -12,7 +12,7 @@ from handlers.rasa_handler import RasaHandler, register_rasa_handlers
 from handlers.gigachat_handler import GigaChatHandler
 from handlers.inline_handler import register_inline_handlers
 from utils.logging_config import setup_logging
-from logic.query_analyze import QueryAnalyzer
+from logic.llm_analyzer.query_analyze import QueryAnalyzer
 from logic.dialogue_manager import DialogueManager
 from utils.context_manager import RedisContextManager
 from utils.heartbeat import BotHeartbeat
@@ -56,7 +56,7 @@ async def on_startup(dispatcher):
             while True:
                 try:
                     await hb.ping()
-                    # logger.debug("Heartbeat sent to Redis") # Раскомментируй для отладки
+                    # logger.debug("Heartbeat sent to Redis")
                 except Exception as e:
                     logger.error(f"Ошибка Heartbeat: {e}")
                 await asyncio.sleep(60)

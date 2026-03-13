@@ -1,4 +1,3 @@
-# TelegramBot/logic/validator.py
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -9,7 +8,7 @@ VALID_ACTIONS = [
     "list_items", "count_items", "get_help", "small_talk", "unknown"
 ]
 
-VALID_TYPES = ["Biological", "GeoPlace", "Infrastructure", "Unknown"]
+VALID_TYPES = ["Biological", "GeoPlace", "Infrastructure", "Service", "Unknown"]
 
 # Категории для Infrastructure
 INFRASTRUCTURE_CATEGORIES = ["Природный объект", "Достопримечательности"]
@@ -84,9 +83,24 @@ class AnalysisResponse(BaseModel):
     secondary_entity: Optional[Entity] = None
     attributes: dict = Field(default_factory=dict)
 
+    # --- ДОБАВЛЯЕМ ЖЕСТКИЙ ФИЛЬТР АТРИБУТОВ ---
+    @field_validator('attributes')
+    def filter_attributes(cls, v):
+        # Список разрешенных ключей
+        allowed_keys = {"season", "habitat", "fruits_present", "flowering", "related_objects"}
+        
+        # Оставляем только те ключи, которые есть в разрешенном списке
+        filtered = {k: val for k, val in v.items() if k in allowed_keys}
+        
+        if len(filtered) != len(v):
+            # Логируем, если модель попыталась "сфантазировать" лишнее
+            import logging
+            logging.getLogger(__name__).warning(f"Очищены выдуманные атрибуты LLM. Было: {v}, Стало: {filtered}")
+            
+        return filtered
+
     @field_validator('action')
     def validate_action(cls, v):
         if v not in VALID_ACTIONS:
-            # Если действие выдумано, меняем на unknown, чтобы не крашить бота
             return "unknown"
         return v
