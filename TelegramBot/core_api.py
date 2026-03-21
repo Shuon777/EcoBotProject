@@ -148,7 +148,7 @@ async def clear_context(data: dict = Body(...)):
     return {"status": "cleared"}
 
 BASE_DIR = Path(__file__).parent
-PROMPTS_DIR = BASE_DIR / "logic" / "prompts_structure"
+PROMPTS_DIR = BASE_DIR / "logic" / "llm_analyzer"
 ENV_PATH = BASE_DIR / ".env"
 
 PROMPT_FILES =[

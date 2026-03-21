@@ -135,9 +135,9 @@ class QueryAnalyzer:
         prompt_template = UniversalPrompts.analysis_prompt()
         chain = prompt_template | self.llm
 
-        current_actions = self._get_prompt_part('prompts_structure/classifications_actions_part_of_prompt.txt')
-        current_examples = self._get_prompt_part("prompts_structure/examples_for_prompt.txt")
-        current_types = self._get_prompt_part('prompts_structure/classifications_entities_part_of_prompt.txt')
+        current_actions = self._get_prompt_part('classifications_actions_part_of_prompt.txt')
+        current_examples = self._get_prompt_part("examples_for_prompt.txt")
+        current_types = self._get_prompt_part('classifications_entities_part_of_prompt.txt')
         #current_flora = self._get_prompt_part('prompts_structure/examples_entity.txt')
 
         for attempt in range(MAX_RETRIES + 1):
