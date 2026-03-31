@@ -66,16 +66,18 @@ class QueryAnalyzer:
         except Exception as e:
             logger.error(f"❌ Ошибка при чтении {full_path}: {e}")
             return ""
-        
+            
     def _init_ollama(self):
-        """Подключение к локальной модели через туннель"""
-        logger.info("🤖 Инициализация LOCAL OLLAMA (Qwen)")
-        return ChatOpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="ollama", 
-            model="qwen2.5:7b", 
-            temperature=0.1
-        )
+            """Подключение к локальной модели через туннель"""
+            logger.info("🤖 Инициализация LOCAL OLLAMA (Qwen) с JSON Mode")
+            llm = ChatOpenAI(
+                base_url="http://localhost:11434/v1",
+                api_key="ollama",
+                model="qwen2.5:7b",
+                temperature=0.0,
+                model_kwargs={"response_format": {"type": "json_object"}}
+            )
+            return llm.with_structured_output(AnalysisResponse)
 
     def _init_gigachat(self) -> GigaChat:
         """Инициализация GigaChat с API-ключом"""
@@ -126,77 +128,65 @@ class QueryAnalyzer:
 
     async def _make_llm_request(self, query: str) -> Optional[Dict[str, Any]]:
         """
-        Делает запрос к LLM с валидацией и автоматическим исправлением ошибок (Retry Loop).
+        Делает запрос к LLM через Structured Output с правильным логированием.
         """
-        MAX_RETRIES = 2  # Сколько раз даем шанс исправиться
-        
+        MAX_RETRIES = 2
         current_query_prompt = query
-        # Базовый промпт
+        
         prompt_template = UniversalPrompts.analysis_prompt()
         chain = prompt_template | self.llm
-
+        
         current_actions = self._get_prompt_part('classifications_actions_part_of_prompt.txt')
         current_examples = self._get_prompt_part("examples_for_prompt.txt")
         current_types = self._get_prompt_part('classifications_entities_part_of_prompt.txt')
-        #current_flora = self._get_prompt_part('prompts_structure/examples_entity.txt')
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                # Логируем попытку
-                if attempt > 0:
-                    logger.info(f"🔄 Попытка исправления #{attempt} для запроса '{query}'")
-
-                response = await chain.ainvoke({
-                    "query": current_query_prompt,  
-                    "actions": current_actions, 
-                    "examples": current_examples, 
+                # 1. Запрашиваем ответ (chain возвращает ГОТОВЫЙ объект AnalysisResponse)
+                response_obj = await chain.ainvoke({
+                    "query": current_query_prompt,
+                    "actions": current_actions,
+                    "examples": current_examples,
                     "types": current_types,
                 })
                 
-                generated_text = response.content.strip()
-                json_text = self._extract_json_safe(generated_text)
+                # --- ЛОГИРОВАНИЕ УСПЕШНОГО ОТВЕТА ---
+                # Дампим Pydantic-объект в красивый JSON для логов
+                logger.info(f"🤖 [Попытка {attempt}] ОТВЕТ LLM (Structured):\n{response_obj.model_dump_json(indent=2, by_alias=True)}")
+                # -------------------------------------
                 
-                if not json_text:
-                    raise ValueError("JSON не найден в ответе LLM")
-
-                parsed_json = json.loads(json_text)
-                
-                # --- ВАЛИДАЦИЯ PYDANTIC ---
-                # Это выбросит ошибку ValidationError, если структура неверна
-                validated_model = AnalysisResponse(**parsed_json)
-                
-                # Если всё ок, превращаем обратно в dict (exclude_none=False важно, чтобы null поля остались null)
-                result_dict = validated_model.model_dump(by_alias=True)\
+                # 2. Превращаем в словарь для дальнейшей работы бота
+                result_dict = response_obj.model_dump(by_alias=True)
                 
                 if not result_dict.get("search_query"):
                     result_dict["search_query"] = query
-                
-                logger.info(f"✅ Успешная валидация (Попытка {attempt}). Action: {result_dict.get('action')}")
+                    
+                logger.info(f"✅ Успешная валидация. Action: {result_dict.get('action')}")
                 return result_dict
 
-            except (json.JSONDecodeError, ValidationError, ValueError) as e:
+            except Exception as e:
+                # Если LLM попытается вернуть то, что не вписывается в схему, 
+                # LangChain выбросит ошибку OutputParserException, и мы её перехватим.
                 error_msg = str(e)
-                logger.warning(f"⚠️ Ошибка валидации на попытке {attempt}: {error_msg}")
                 
-                # Если это была последняя попытка - сдаемся
+                # В тексте ошибки LangChain обычно сам выводит "сырой" кривой JSON, который сломал схему
+                logger.warning(
+                    f"⚠️ Ошибка Structured Output (Попытка {attempt}):\n"
+                    f"Детали ошибки (здесь видна галлюцинация):\n{error_msg}"
+                )
+                
                 if attempt == MAX_RETRIES:
                     logger.error(f"❌ Не удалось получить валидный ответ после {MAX_RETRIES} попыток.")
                     return None
-                
-                # Если есть попытки - формируем "исправляющий" промпт для следующей итерации
-                # Мы добавляем сообщение об ошибке к тексту запроса, эмулируя диалог
+                    
+                # Формируем корректирующий промпт
                 current_query_prompt = (
                     f"{query}\n\n"
-                    f"SYSTEM ERROR: Твой предыдущий ответ содержал ошибку валидации:\n{error_msg}\n\n"
-                    f"ЗАДАЧА: Исправь JSON и верни его ПОЛНОСТЬЮ.\n"
-                    f"1. Не забудь поле `search_query`.\n"
-                    f"2. Убедись, что 'type' это Biological, GeoPlace или Infrastructure (не Unknown).\n"
-                    f"3. Верни валидный JSON."
+                    f"SYSTEM ERROR: Твой предыдущий ответ нарушил жесткую JSON схему:\n{error_msg}\n\n"
+                    f"ЗАДАЧА: Исправь ответ.\n"
+                    f"КРИТИЧЕСКИ ВАЖНО: Поле 'type' должно быть СТРОГО одним из разрешенных слов (Biological, GeoPlace, Infrastructure, Service, Unknown)."
                 )
-            
-            except Exception as e:
-                logger.error(f"Критическая ошибка LLM: {e}", exc_info=True)
-                return None
+                
         return None
     
     async def answer_general_question(self, query: str) -> str:

@@ -38,9 +38,18 @@ INFRASTRUCTURE_SUBCATEGORIES = [
 # Категории для Biological
 BIOLOGICAL_CATEGORIES = ["Flora", "Fauna"]
 
+SERVICE_CATEGORIES =[
+    "Экспозиции и выставки", 
+    "Услуги и цены", 
+    "События и экскурсии", 
+    "Правила посещения",
+    "Историческая справка",
+    "Общая информация и FAQ",
+]
+
 class Entity(BaseModel):
     name: Optional[str] = None
-    type: Literal["Biological", "GeoPlace", "Infrastructure", "Unknown"] = "Unknown"
+    type: Literal["Biological", "GeoPlace", "Infrastructure", "Unknown", "Service"] = "Unknown"
     category: Optional[str] = None
     # subcategory ВСЕГДА список, даже если пустой
     subcategory: List[str] = Field(default_factory=list)
@@ -51,6 +60,11 @@ class Entity(BaseModel):
         if not self.name:
             raise ValueError("Entity must have a 'name'.")
 
+        if self.type == "Service":
+            if self.category and self.category not in SERVICE_CATEGORIES:
+                self.category = None
+            self.subcategory = []
+
         # 1. Если Biological, subcategory должна быть пустой
         if self.type == "Biological":
             if self.subcategory:
@@ -59,7 +73,7 @@ class Entity(BaseModel):
                 self.category = None
 
         # 2. Если GeoPlace, subcategory и category должны быть пустыми
-        if self.type == "GeoPlace":
+        if self.type in["GeoPlace", "Unknown"]:
             self.subcategory = []
             self.category = None
 
