@@ -58,19 +58,19 @@ class GigaChatHandler:
         
         # Маппинг действий на чистые функции логики
         self.action_handlers: Dict[tuple[str, str], ActionHandler] = {
-            ("describe", "Biological"): handle_get_description,
-            ("describe", "Infrastructure"): handle_geo_request,
+            #("describe", "Biological"): handle_get_description,
+            #?("describe", "Infrastructure"): handle_geo_request,
             ("describe", "GeoPlace"): handle_geo_request,
             ("describe", "Service"): handle_describe_service,
-            ("show_image", "Biological"): handle_get_picture,
-            ("show_map", "Biological"): handle_draw_locate_map,
-            ("show_map", "Infrastructure"): handle_draw_map_of_infrastructure,
-            ("find_nearby", "ANY"): handle_nearest,
-            ("list_items", "Biological"): handle_objects_in_polygon,
-            ("list_items", "Infrastructure"): handle_geo_request,
-            ("count_items", "Infrastructure"): handle_geo_request,
-            ("get_help", "ANY"): self._handle_help_request,       # Локальный метод, возвращает CoreResponse
-            ("small_talk", "ANY"): self._handle_small_talk_request, # Локальный метод
+            #("show_image", "Biological"): handle_get_picture,
+            #("show_map", "Biological"): handle_draw_locate_map,
+            #?("show_map", "Infrastructure"): handle_draw_map_of_infrastructure,
+            #("find_nearby", "ANY"): handle_nearest,
+            #("list_items", "Biological"): handle_objects_in_polygon,
+            #?("list_items", "Infrastructure"): handle_geo_request,
+            #?("count_items", "Infrastructure"): handle_geo_request,
+            ###*("get_help", "ANY"): self._handle_help_request,       # Локальный метод, возвращает CoreResponse
+            ###*("small_talk", "ANY"): self._handle_small_talk_request, # Локальный метод
         }
 
         self.callback_handlers: Dict[str, CallbackHandler] = {

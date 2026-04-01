@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import dotenv_values, set_key
 from fastapi import FastAPI, Body, HTTPException
 from aiogram import types
+from typing import List
 from contextlib import asynccontextmanager
 
 # Импорты логики бота
@@ -13,6 +14,8 @@ from logic.dialogue_manager import DialogueManager
 from utils.context_manager import RedisContextManager
 from handlers.gigachat_handler import GigaChatHandler
 from utils.settings_manager import get_user_settings, update_user_settings
+from logic.DialogSystem.orchestrator import DialogueSystem
+from logic.DialogSystem.schemas import UserRequest, SystemResponse
 
 # Настройки
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s'
@@ -100,38 +103,48 @@ async def test_query(data: dict = Body(...)):
     user_id = data.get("user_id", "test_user")
     request_settings = data.get("settings", {})
 
-    logger.info(f"Запрос от {user_id}: {query}")
-
-    # 1. Настройка окружения пользователя
+    # Принудительно приводим к bool, на случай если фронтенд шлет строку "true"
+    debug_mode = str(request_settings.get("debug_mode", "")).lower() == "true"
+    
+    # Собираем чистый объект настроек
     full_settings = {
         "mode": request_settings.get("mode", "gigachat"),
-        "debug_mode": request_settings.get("debug_mode", False),
+        "debug_mode": debug_mode,
         "gigachat_fallback": request_settings.get("gigachat_fallback", True),
         "stoplist_enabled": request_settings.get("stoplist_enabled", True)
     }
-    update_user_settings(user_id, full_settings)
 
-    # 2. Инициализация компонентов бота
-    qa = QueryAnalyzer()
     cm = RedisContextManager()
-    dm = DialogueManager(cm)
+    ds = DialogueSystem(provider="qwen", session=session, context_manager=cm)
     
-    mock_message = MockMessage(text=query, user_id=user_id)
-    handler = GigaChatHandler(qa, dm, session)
+    # Передаем настройки в запрос
+    request = UserRequest(
+        user_id=user_id,
+        query=query,
+        context=[], 
+        settings=full_settings
+    )
 
-    # 3. Запуск логики (асинхронно)
-    if full_settings["mode"] == "gigachat":
-        callback_prefixes = ["clarify_idx", "explore", "fallback", "clarify_more"]
-        if ":" in query and any(p in query for p in callback_prefixes):
-            cb_query = SimpleMock(
-                id=f"cb_{user_id}", from_user=mock_message.from_user,
-                message=mock_message, data=query
-            )
-            await handler.process_callback(cb_query)
-        else:
-            await handler.process_message(mock_message)
+    responses = await ds.process_request(request)
     
-    return mock_message.bot.responses
+    output = []
+    for r in responses:
+        item = {
+            "type": r.response_type,
+            "buttons": r.buttons,
+            "debug_info": r.debug_info
+        }
+        
+        # ЛОГИКА ДЛЯ АДМИНКИ (chat.html):
+        if r.response_type == "image":
+            item["content"] = r.media_url # Ссылка для <img>
+        else:
+            item["content"] = r.text # Текст для пузыря
+            if r.media_url:
+                item["static_map"] = r.media_url # Поле для карт
+        
+        output.append(item)
+    return output
 
 @app.post("/clear_context")
 async def clear_context(data: dict = Body(...)):

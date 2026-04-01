@@ -208,7 +208,7 @@ async def handle_draw_map_of_infrastructure(
     else:
         payload["object_type"] = normalized_type
         if not area_name:
-             return [CoreResponse(type="text", content=f"Пожалуйста, уточните, где вы хотите найти '{raw_object_name}'?")]
+            return [CoreResponse(type="text", content=f"Пожалуйста, уточните, где вы хотите найти '{raw_object_name}'?")]
         payload["area_name"] = area_name
 
     try:
@@ -425,7 +425,7 @@ async def handle_geo_request(
             if baikal_relation: payload["baikal_relation"] = baikal_relation
             
             base_url = API_URLS['find_geo_special_description']
-            params = f"query={query_text}&force_vector_search=true&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
+            params = f"query={query_text}&use_gigachat_answer=true&debug_mode={str(debug_mode).lower()}"
             if should_include_object_name(raw_entity_name):
                 params += f"&object_name={raw_entity_name}"
             
