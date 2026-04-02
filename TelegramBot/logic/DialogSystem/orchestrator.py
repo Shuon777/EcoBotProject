@@ -19,6 +19,7 @@ from logic.action_handlers.geospatial import (
     handle_geo_request, handle_draw_map_of_infrastructure
 )
 from logic.action_handlers.sevices import handle_describe_service
+from .rewriter import QueryRewriter
 
 
 logger = logging.getLogger("DialogueSystem")
@@ -29,7 +30,7 @@ class DialogueSystem:
         self.session = session
         self.provider = provider
         self.context_manager = context_manager
-        
+        self.rewriter = QueryRewriter(provider)
         self.router = SemanticRouter(provider)
         self.biology_worker = BiologyWorker(provider)
         self.infra_worker = InfrastructureWorker(provider)
@@ -55,40 +56,46 @@ class DialogueSystem:
 
     async def process_request(self, request: UserRequest) -> List[SystemResponse]:
         logger.info(f"--- 🚀 START PROCESS: {request.query} ---")
-        
         debug_enabled = request.settings.get("debug_mode", False)
-        debug_traces = []
+        debug_traces =[]
         
-        # 1. Загружаем состояние из Redis
         state_key = f"state:{request.user_id}"
         state_data = await self.context_manager.get_context(state_key)
         previous_state = DialogueState(**state_data) if state_data else DialogueState()
 
-        # 2. Перехват технических команд (Кнопки)
+        # 1. Перехват технических команд (Кнопки)
         if ":" in request.query or request.query.startswith("clarify"):
             return await self._handle_technical_call(request, debug_traces)
 
         try:
-            # 3. Роутинг (теперь с учетом предыдущего интента)
-            # Передайте в router.py аргумент last_intent, если обновили его промпт
-            current_intent = await self.router.get_intent(request.query, previous_state.intent) 
-            if debug_enabled: debug_traces.append(f"🎯 <b>Router Intent:</b> {current_intent}")
-
-            # 4. Исполнение веток
-            final_responses = []
+            # 2. РЕРАЙТЕР: Восстанавливаем запрос из истории
+            # Передаем оригинальный запрос и отформатированную историю
+            rewritten_query = await self.rewriter.rewrite(request.query, request.context)
+            if debug_enabled and rewritten_query != request.query:
+                debug_traces.append(f"✍️ <b>Rewriter:</b> <code>{request.query}</code> ➡️ <code>{rewritten_query}</code>")
             
-            if current_intent == "BIOLOGY":
-                final_responses = await self._run_biology_flow(request.query, request, current_intent, previous_state, debug_traces)
-            elif current_intent == "INFRASTRUCTURE":
-                final_responses = await self._run_infra_flow(request.query, request, current_intent, previous_state, debug_traces)
-            elif current_intent == "KNOWLEDGE":
-                final_responses = await self._run_knowledge_flow(request.query, request, current_intent, debug_traces)
-            else:
-                final_responses = [SystemResponse(text="Чем могу помочь?", intent="CHITCHAT")]
+            # Заменяем запрос на переписанный для всей дальнейшей логики!
+            actual_query = rewritten_query
 
-            # 5. Сбор дебага
+            # 3. РОУТИНГ (уже по понятному запросу)
+            current_intent = await self.router.get_intent(actual_query, previous_state.intent)
+            if debug_enabled: 
+                debug_traces.append(f"🎯 <b>Router Intent:</b> {current_intent}")
+
+            # 4. ИСПОЛНЕНИЕ (передаем actual_query воркерам)
+            final_responses =[]
+            if current_intent == "BIOLOGY":
+                final_responses = await self._run_biology_flow(actual_query, request, current_intent, previous_state, debug_traces)
+            elif current_intent == "INFRASTRUCTURE":
+                final_responses = await self._run_infra_flow(actual_query, request, current_intent, previous_state, debug_traces)
+            elif current_intent == "KNOWLEDGE":
+                final_responses = await self._run_knowledge_flow(actual_query, request, current_intent, debug_traces)
+            else:
+                final_responses =[SystemResponse(text="Чем могу помочь?", intent="CHITCHAT")]
+
+            # Добавляем дебаг-сообщение самым первым в списке (чтобы оно было сверху)
             if debug_enabled and debug_traces:
-                final_responses.append(SystemResponse(
+                final_responses.insert(0, SystemResponse(
                     text="\n\n".join(debug_traces), intent=current_intent, response_type="debug"
                 ))
 
@@ -96,7 +103,7 @@ class DialogueSystem:
 
         except Exception as e:
             logger.error(f"❌ Pipeline Failure: {e}", exc_info=True)
-            return [SystemResponse(text=f"Ошибка: {e}", intent="KNOWLEDGE")]
+            return [SystemResponse(text=f"Произошла ошибка при обработке: {e}", intent="KNOWLEDGE")]
 
     # --- ВЕТКИ (FLOWS) ---
 

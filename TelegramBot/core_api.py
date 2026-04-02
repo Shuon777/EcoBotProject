@@ -112,9 +112,8 @@ async def test_query(data: dict = Body(...)):
     
     # 3. ФОРМАТИРУЕМ ДЛЯ REWRITER (превращаем в список ролей)
     formatted_context = []
-    for entry in history[-3:]: # берем последние 3 пары
+    for entry in reversed(history[:3]):
         formatted_context.append({"role": "user", "content": entry.get("query", "")})
-        # В истории ключ может называться response_content или text (проверьте историю в Redis)
         resp_text = entry.get("response_content", "") or entry.get("text", "")
         formatted_context.append({"role": "assistant", "content": str(resp_text)})
 

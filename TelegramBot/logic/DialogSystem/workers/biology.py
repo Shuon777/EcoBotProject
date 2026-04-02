@@ -10,13 +10,13 @@ logger = logging.getLogger("BiologyWorker")
 # Схема ТОЛЬКО для биологии
 class BiologyAnalysis(BaseModel):
     model_config = ConfigDict(extra='forbid')
-
     action: Optional[Literal["describe", "show_image", "show_map", "list_items", "find_nearby"]] = None
-    species_name: str = Field(None, description="Название вида в именительном падеже (нерпа, кедр)")
+    species_name: str = Field(None, description="Название вида в именительном падеже (нерпа, лиственница сибирская)")
     category: Optional[Literal["Flora", "Fauna", "Unknown"]] = None
+    # НОВОЕ ОПИСАНИЕ ПОЛЯ:
     attributes: Dict[str, str] = Field(
-        default_factory=dict, 
-        description="Атрибуты: season (Зима/Весна/Лето/Осень), habitat (болото, берег), fruits_present, flowering"
+        default_factory=dict,
+        description="ТОЛЬКО ЕСЛИ ЯВНО УКАЗАНО В ТЕКСТЕ. Если признаков в запросе нет, должен быть пустой словарь {}. Разрешенные ключи: season, habitat, fruits_present, flowering."
     )
     location_context: Optional[str] = Field(None, description="Только если в запросе ЯВНО указан город/место. Иначе null.")
 
@@ -26,25 +26,31 @@ class BiologyWorker:
         self.parser = llm.with_structured_output(BiologyAnalysis)
 
     async def analyze(self, query: str) -> BiologyAnalysis:
-        has_near = any(m in query.lower() for m in ["около", "рядом", "возле", "в районе"])
+        has_near = any(m in query.lower() for m in["около", "рядом", "возле", "в районе"])
         hint = "СИСТЕМНАЯ НАВОДКА: Замечен маркер близости. Приоритет action: find_nearby." if has_near else ""
+        
         prompt = f"""
-        ЗАДАЧА: Извлечь данные в JSON.
+        ЗАДАЧА: Извлечь данные из текста пользователя в JSON.
         ЛОКАЛЬ: Только кириллица.
         {hint}
-        
         СТРОГИЕ ПРАВИЛА:
-        1. Поле 'species_name': Поставь в именительный падеж. Запрещена латиница и смешанные символы типа 'ęd'.
-        2. action: 
-           - describe: если просят рассказать, описать.
-           - show_image: если просят показать фото, как выглядит.
-           - show_map: если просят показать на карте, где обитает.
-           - list_items: если просят список (какая флора на Ольхоне).
-           - find_nearby: если просят найти объект РЯДОМ с другим местом ("около", "возле", "в районе")
+        1. Поле 'species_name': Сохраняй порядок слов как в запросе (например, "лиственница сибирская"). Именительный падеж.
+        2. action:
+           - describe: рассказать, описать.
+           - show_image: показать фото, как выглядит, "а осенью?" (подразумевает фото).
+           - show_map: показать на карте, где обитает/растет.
+           - list_items: списки.
+           - find_nearby: найти рядом.
         3. category: Flora (растения/грибы), Fauna (животные/рыбы).
-        4. Поле 'attributes': Только присутствующие в запросе прилагательные (например, "зимний", "лесной"). Запрещена генерация "описания" или фактов об объекте.
-        5. Поле 'location_context': Если локация отсутствует в запросе — null. Запрещено генерировать локации.
-        6. ЗАПРЕЩЕНО: Добавлять любые ключи, отсутствующие в схеме.
+        4. Поле 'attributes'. ИЗВЛЕКАЙ ТОЛЬКО ТО, ЧТО ЯВНО НАПИСАНО В ЗАПРОСЕ ПОЛЬЗОВАТЕЛЯ!
+           КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать свойства объекта из своих знаний ботаники!
+           Если в тексте нет указания сезона, плодов или места обитания — оставляй словарь attributes ПУСТЫМ ({{}}).
+           Разрешенные ключи (только если они ЕСТЬ в тексте):
+           - "season": "Зима", "Весна", "Лето", "Осень". (Или производные "осенью", "зимой" и т.п.)
+           - "habitat": среда обитания ("болото", "побережье", "степь").
+           - "fruits_present": плоды ("шишка", "ягода").
+           - "flowering": "Да" (если есть "цветет", "цветущий").
+        5. Поле 'location_context': Если локация отсутствует в тексте — null. Запрещено выдумывать.
         
         Запрос: {query}
         """
