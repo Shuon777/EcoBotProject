@@ -103,29 +103,45 @@ async def test_query(data: dict = Body(...)):
     user_id = data.get("user_id", "test_user")
     request_settings = data.get("settings", {})
 
-    # Принудительно приводим к bool, на случай если фронтенд шлет строку "true"
-    debug_mode = str(request_settings.get("debug_mode", "")).lower() == "true"
+    # 1. Инициализируем Redis (убедитесь, что параметры совпадают с bot.py)
+    cm = RedisContextManager(host=os.getenv('REDIS_PATH', 'localhost'), port=6379, db=0)
     
-    # Собираем чистый объект настроек
-    full_settings = {
-        "mode": request_settings.get("mode", "gigachat"),
-        "debug_mode": debug_mode,
-        "gigachat_fallback": request_settings.get("gigachat_fallback", True),
-        "stoplist_enabled": request_settings.get("stoplist_enabled", True)
-    }
+    # 2. ДОСТАЕМ ИСТОРИЮ
+    history_data = await cm.get_context(user_id)
+    history = history_data.get("history", [])
+    
+    # 3. ФОРМАТИРУЕМ ДЛЯ REWRITER (превращаем в список ролей)
+    formatted_context = []
+    for entry in history[-3:]: # берем последние 3 пары
+        formatted_context.append({"role": "user", "content": entry.get("query", "")})
+        # В истории ключ может называться response_content или text (проверьте историю в Redis)
+        resp_text = entry.get("response_content", "") or entry.get("text", "")
+        formatted_context.append({"role": "assistant", "content": str(resp_text)})
 
-    cm = RedisContextManager()
+    # 4. СОЗДАЕМ ЗАПРОС С РЕАЛЬНЫМ КОНТЕКСТОМ
     ds = DialogueSystem(provider="qwen", session=session, context_manager=cm)
-    
-    # Передаем настройки в запрос
     request = UserRequest(
         user_id=user_id,
         query=query,
-        context=[], 
-        settings=full_settings
+        context=formatted_context, 
+        settings=request_settings
     )
 
+    # 5. ВЫПОЛНЯЕМ
     responses = await ds.process_request(request)
+
+    # 6. ВАЖНО: СОХРАНЯЕМ ТЕКУЩИЙ ОТВЕТ В ИСТОРИЮ, иначе следующий запрос его не увидит!
+    # Берем текст из первого ответа в списке
+    final_text = responses[0].text if responses else ""
+    
+    # Используем логику сохранения
+    new_entry = {
+        "query": query,
+        "response_content": final_text
+    }
+    updated_history = [new_entry] + history[:10]
+    history_data["history"] = updated_history
+    await cm.set_context(user_id, history_data)
     
     output = []
     for r in responses:

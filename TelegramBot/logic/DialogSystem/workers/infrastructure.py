@@ -1,18 +1,21 @@
 # TelegramBot/logic/dialogue_system/workers/infrastructure.py
 import logging
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from ..llm_factory import LLMFactory
 
 logger = logging.getLogger("InfrastructureWorker")
 
 class InfraAnalysis(BaseModel):
-    action: Literal["describe", "show_map", "list_items", "count_items"]
-    object_name: str = Field(description="Название объекта или типа объектов (музеи, памятник, Байкальский музей)")
-    entity_type: Literal["Infrastructure", "GeoPlace", "Service"] = "Infrastructure"
-    category: Optional[str] = Field(None, description="Природный объект или Достопримечательности")
-    subcategory: List[str] = Field(default_factory=list, description="Список: Музеи, Памятники, Наука, Скалы, Горы и т.д.")
-    area_name: Optional[str] = Field(None, description="Географическое местоположение (Иркутск, Листвянка, Ольхон)")
+    model_config = ConfigDict(extra='forbid')
+
+    action: Optional[Literal["describe", "show_map", "list_items", "count_items"]] = None
+    object_name: Optional[str] = Field(None)
+    entity_type: Literal["Infrastructure", "GeoPlace", "Service", "Unknown"] = "Unknown"
+    category: Optional[Literal["Природный объект", "Достопримечательности", "Unknown"]] = "Unknown"
+    
+    subcategory: List[str] = Field(default_factory=list)
+    area_name: Optional[str] = Field(None)
 
 class InfrastructureWorker:
     def __init__(self, provider: str = "qwen"):
@@ -25,9 +28,9 @@ class InfrastructureWorker:
         ЛОКАЛЬ: Только кириллица.
 
         СТРОГИЕ ПРАВИЛА:
-        1. object_name: Что именно ищем? (приводи к именительному падежу).
-        2. area_name: ГДЕ ищем? (населенный пункт, остров, регион).
-        3. action:
+        1. Поле object_name: Что именно ищем? (приводи к именительному падежу).
+        2. Поле area_name: ГДЕ ищем? (населенный пункт, остров, регион).
+        3. Поле action:
            - describe: если просят рассказать об одном конкретном объекте.
            - list_items: если просят перечислить объекты или найти "какие есть".
            - show_map: если просят показать на карте.

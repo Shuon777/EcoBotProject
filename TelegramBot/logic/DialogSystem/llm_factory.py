@@ -10,8 +10,8 @@ class LLMFactory:
             return ChatOpenAI(
                 base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
                 api_key="ollama",
-                model="qwen2.5:7b",
-                temperature=0
+                model="qwen2.5:14b",
+                temperature=0,
             )
         elif provider == "gigachat":
             return GigaChat(

@@ -11,9 +11,9 @@ logger = logging.getLogger("BiologyWorker")
 class BiologyAnalysis(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-    action: Literal["describe", "show_image", "show_map", "list_items", "find_nearby"]
-    species_name: str = Field(description="Название вида в именительном падеже (нерпа, кедр)")
-    category: Literal["Flora", "Fauna", "Unknown"]
+    action: Optional[Literal["describe", "show_image", "show_map", "list_items", "find_nearby"]] = None
+    species_name: str = Field(None, description="Название вида в именительном падеже (нерпа, кедр)")
+    category: Optional[Literal["Flora", "Fauna", "Unknown"]] = None
     attributes: Dict[str, str] = Field(
         default_factory=dict, 
         description="Атрибуты: season (Зима/Весна/Лето/Осень), habitat (болото, берег), fruits_present, flowering"

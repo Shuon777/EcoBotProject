@@ -1,6 +1,6 @@
 # TelegramBot/logic/dialogue_system/router.py
 import logging
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from .llm_factory import LLMFactory
 
@@ -18,30 +18,28 @@ class SemanticRouter:
         # Привязываем схему к модели для строгого вывода
         self.runnable = llm.with_structured_output(Route)
 
-    async def get_intent(self, query: str) -> str:
+    async def get_intent(self, query: str, last_intent: Optional[str] = None) -> str:
+        # Добавляем блок контекста в промпт
+        context_hint = f"\nКОНТЕКСТ: Предыдущая тема диалога: {last_intent}\n" if last_intent else ""
+
         prompt = f"""
-        Ты — строгий диспетчер запросов. Твоя задача — выбрать ОДНУ категорию.
-
-        ПРАВИЛА ПРИОРИТЕТА:
-        1. KNOWLEDGE (Справка и Процедуры) — ВЫСШИЙ ПРИОРИТЕТ. 
-           Если в запросе есть слова: "разрешение", "оформить", "заказать", "купить", "билеты", "цена", "как добраться", "регистрация", "правила", "онлайн".
-           Даже если упомянуто место (парк, музей) — если вопрос о ПРОЦЕДУРЕ, это KNOWLEDGE.
-
-        2. BIOLOGY — Если упомянуты животные, растения или грибы.
-
-        3. INFRASTRUCTURE — Если вопрос о физическом объекте: "где находится скала", "опиши музей", "какие памятники есть". 
-
-        4. CHITCHAT — Приветствия, благодарности, "как дела".
-
-        ПРИМЕР: 
-        "Где оформить пропуск в нацпарк?" -> KNOWLEDGE (потому что пропуск — это процедура).
-        "Что за скала Шаманка?" -> INFRASTRUCTURE (потому что вопрос об объекте).
-
-        Запрос: {query}
+        {context_hint}
+        ЗАДАЧА: Классифицировать запрос.
+        
+        КРИТЕРИИ:
+        1. BIOLOGY: Растения (деревья, цветы, травы, грибы) и животные (рыбы, птицы, насекомые). 
+           ПРИМЕРЫ: нерпа, омуль, ЛИСТВЕННИЦА, кедр, эдельвейс.
+        2. INFRASTRUCTURE: Рукотворные объекты и места. Здания, музеи, памятники, смотровые площадки, города, поселки. 
+           ПРИМЕРЫ: Байкальский музей, Листвянка, Иркутск, памятник Бабру, обсерватория.
+        3. KNOWLEDGE: Процедуры, правила, цены, билеты, история.
+        
+        ЗАПРЕТ: Никогда не относи растения (деревья) к INFRASTRUCTURE.
+        
+        Запрос: "{query}"
         """
         try:
             result = await self.runnable.ainvoke(prompt)
             return result.intent
         except Exception as e:
             logger.error(f"Router error: {e}")
-            return "KNOWLEDGE" # Безопасный fallback
+            return last_intent or "CHITCHAT"
