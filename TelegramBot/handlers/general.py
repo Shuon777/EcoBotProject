@@ -52,7 +52,6 @@ def create_settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
         keyboard.add(InlineKeyboardButton("❌ Отвязаться от стенда", callback_data="stand_detach"))
     return keyboard
 
-
 def register_general_handlers(dp: Dispatcher):
     """
     Регистрирует общие обработчики команд и настроек.

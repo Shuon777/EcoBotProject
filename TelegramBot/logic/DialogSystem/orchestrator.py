@@ -49,9 +49,9 @@ class DialogueSystem:
             ("find_nearby", "Biological"): handle_nearest,
             ("find_nearby", "ANY"): handle_nearest,
             ("list_items", "Biological"): handle_objects_in_polygon,
-            ("list_items", "Infrastructure"): handle_draw_map_of_infrastructure,
+            ("list_items", "Infrastructure"): handle_geo_request,
             ("list_items", "GeoPlace"): handle_geo_request,
-            ("count_items", "Infrastructure"): handle_draw_map_of_infrastructure,
+            ("count_items", "Infrastructure"): handle_geo_request,
         }
 
     async def process_request(self, request: UserRequest) -> List[SystemResponse]:
@@ -77,10 +77,10 @@ class DialogueSystem:
             # Заменяем запрос на переписанный для всей дальнейшей логики!
             actual_query = rewritten_query
 
-            # 3. РОУТИНГ (уже по понятному запросу)
-            current_intent = await self.router.get_intent(actual_query, previous_state.intent)
+            # 3. ROUTER (определяет направленность запроса)
+            current_intent, routing_source = await self.router.get_intent(actual_query, previous_state.intent)
             if debug_enabled: 
-                debug_traces.append(f"🎯 <b>Router Intent:</b> {current_intent}")
+                debug_traces.append(f"🎯 <b>Router Intent:</b> {current_intent} <i>(via {routing_source})</i>")
 
             # 4. ИСПОЛНЕНИЕ (передаем actual_query воркерам)
             final_responses =[]
@@ -138,7 +138,7 @@ class DialogueSystem:
         return responses
 
     async def _run_infra_flow(self, query: str, request: UserRequest, intent: str, previous: DialogueState, debug_traces: list) -> List[SystemResponse]:
-        analysis = await self.infra_worker.analyze(query)
+        analysis, infra_debug = await self.infra_worker.analyze(query)
         if request.settings.get("debug_mode"): 
             debug_traces.append(f"🏛️ <b>Infra NLU:</b>\n{json.dumps(analysis.model_dump(), ensure_ascii=False)}")
         
